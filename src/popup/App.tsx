@@ -10,7 +10,7 @@ const KIND_LABELS: Record<string, string> = {
   text: '文本', textarea: '多行文本', number: '数字', password: '密码', email: '邮箱', url: '网址', tel: '电话',
   select: '下拉', 'select-widget': '下拉', multiselect: '多选', cascader: '级联', date: '日期', datetime: '日期时间',
   daterange: '日期范围', checkbox: '复选', 'checkbox-group': '复选组', 'radio-group': '单选组', switch: '开关',
-  'upload-image': '上传图片', 'upload-file': '上传文件', richtext: '富文本',
+  'upload-image': '上传图片', 'upload-file': '上传文件', richtext: '富文本', lookup: '弹窗选择',
 };
 
 export default function App() {

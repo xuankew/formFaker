@@ -1,4 +1,4 @@
-import { createApp, reactive, ref } from 'vue';
+import { createApp, onMounted, reactive, ref } from 'vue';
 import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css';
 
@@ -113,10 +113,70 @@ const template = `
       <el-upload action="#" :auto-upload="false" accept="image/*"><el-button>选择图片</el-button></el-upload>
     </el-form-item>
     <el-form-item label="企业级账号"><el-input v-model="model.account" disabled placeholder="企业级账号" /></el-form-item>
+    <el-form-item label="清算会员号">
+      <el-input v-model="model.clearingNo" readonly placeholder="请选择">
+        <template #suffix>
+          <span class="el-icon el-icon-search" style="cursor:pointer" @click="pickerVisible = true">🔍</span>
+        </template>
+      </el-input>
+    </el-form-item>
     <el-form-item>
       <el-button type="primary" @click="dump">打印表单模型（验证框架状态同步）</el-button>
     </el-form-item>
   </el-form>
+
+  <h2>联系人表格区（列头即标签）</h2>
+  <el-table :data="model.contacts" border style="width:100%">
+    <el-table-column label="姓名" width="140">
+      <template #default="s"><el-input v-model="s.row.name" placeholder="请输入" /></template>
+    </el-table-column>
+    <el-table-column label="角色" width="170">
+      <template #default="s">
+        <el-select v-model="s.row.role" placeholder="请选择">
+          <el-option label="业务联系人" value="biz" />
+          <el-option label="财务联系人" value="fin" />
+        </el-select>
+      </template>
+    </el-table-column>
+    <el-table-column label="区号" width="110">
+      <template #default="s"><el-input-number v-model="s.row.code" :min="1" :controls="false" /></template>
+    </el-table-column>
+    <el-table-column label="手机号" width="170">
+      <template #default="s"><el-input v-model="s.row.mobile" placeholder="请输入" /></template>
+    </el-table-column>
+    <el-table-column label="电子邮箱">
+      <template #default="s"><el-input v-model="s.row.email" placeholder="请输入" /></template>
+    </el-table-column>
+  </el-table>
+  <p><el-button @click="addContact">+ 添加一行</el-button></p>
+
+  <div style="height:1100px;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#999;margin:24px 0">
+    ↓ 下面的区块要滚动进入可视区才会渲染（模拟懒挂载 / 折叠区）
+  </div>
+  <div id="lazy-anchor" style="height:1px"></div>
+  <template v-if="lazyMounted">
+    <h2>懒挂载区（滚动后才出现）</h2>
+    <el-form label-width="140px" style="max-width:640px">
+      <el-form-item label="供应商产能"><el-input v-model="model.capacity" placeholder="请输入" /></el-form-item>
+      <el-form-item label="供应商产线"><el-input v-model="model.lines" placeholder="请输入" /></el-form-item>
+      <el-form-item label="供应商合作客户"><el-input v-model="model.clients" placeholder="请输入" /></el-form-item>
+      <el-form-item label="供应商意向物料"><el-input v-model="model.materials" placeholder="请输入" /></el-form-item>
+    </el-form>
+  </template>
+
+  <el-dialog v-model="pickerVisible" title="选择清算会员号" width="520px">
+    <el-table :data="pickerRows" highlight-current-row @row-click="pickRow">
+      <el-table-column width="50">
+        <template #default="s"><el-radio v-model="pickedId" :value="s.row.no" /></template>
+      </el-table-column>
+      <el-table-column prop="no" label="会员号" />
+      <el-table-column prop="bank" label="开户行" />
+    </el-table>
+    <template #footer>
+      <el-button @click="pickerVisible = false">取消</el-button>
+      <el-button type="primary" @click="confirmPick">确定</el-button>
+    </template>
+  </el-dialog>
 </div>
 `;
 
@@ -127,14 +187,48 @@ const app = createApp({
       name: '', nature: '', scope: [] as string[], region: [] as string[], found: '',
       range: null as string[] | null, staff: 1, tax: '', cate: [] as string[], on: false, account: '',
       prodType: '',
+      clearingNo: '', capacity: '', lines: '', clients: '', materials: '',
+      contacts: [
+        { name: '', role: '', code: 86, mobile: '', email: '' },
+        { name: '', role: '', code: 86, mobile: '', email: '' },
+      ],
     });
+    const pickerVisible = ref(false);
+    const pickedId = ref('');
+    const pickerRows = [
+      { no: 'QX0001', bank: '中国银行郑州分行' },
+      { no: 'QX0002', bank: '招商银行深圳分行' },
+    ];
+    const pickRow = (row: { no: string }) => { pickedId.value = row.no; };
+    const confirmPick = () => {
+      model.clearingNo = pickedId.value;
+      pickerVisible.value = false;
+    };
+    const addContact = () => model.contacts.push({ name: '', role: '', code: 86, mobile: '', email: '' });
+
+    const lazyMounted = ref(false);
+    onMounted(() => {
+      const anchor = document.getElementById('lazy-anchor');
+      if (!anchor) return;
+      const io = new IntersectionObserver((entries, obs) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          lazyMounted.value = true;
+          obs.disconnect();
+        }
+      }, { rootMargin: '200px 0px' });
+      io.observe(anchor);
+    });
+
     const dump = () => {
       console.log('[demo] element-plus model =', JSON.parse(JSON.stringify(model)));
       const native = new FormData(document.getElementById('native-form') as HTMLFormElement);
       console.log('[demo] native form =', Object.fromEntries(native.entries()));
     };
     (window as unknown as Record<string, unknown>).__demoModel = model;
-    return { model, regionOptions, dump, activeTab: ref('native') };
+    return {
+      model, regionOptions, dump, activeTab: ref('native'),
+      pickerVisible, pickedId, pickerRows, pickRow, confirmPick, addContact, lazyMounted,
+    };
   },
 });
 app.use(ElementPlus);

@@ -30,6 +30,18 @@ export function blur(el: HTMLElement): void {
   if (typeof el.blur === 'function') el.blur();
 }
 
+// Controls outside the viewport (or with no layout box at all under
+// content-visibility:auto) break framework poppers, which position their panel from
+// the trigger's rect. Bring the target into view before interacting with it.
+export function ensureInView(el: Element): void {
+  const rect = el.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement?.clientHeight || 0;
+  const vw = window.innerWidth || document.documentElement?.clientWidth || 0;
+  const noBox = rect.width === 0 && rect.height === 0;
+  const outside = rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw;
+  if (noBox || outside) (el as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'nearest' });
+}
+
 export function isVisibleEl(el: Element): boolean {
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return false;

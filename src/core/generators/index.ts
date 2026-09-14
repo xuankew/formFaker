@@ -173,7 +173,7 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
   gender: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(GENDERS) : enumValue(ctx),
   education: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(EDUCATIONS) : enumValue(ctx),
   enum: (ctx) => enumValue(ctx),
-  generic: () => `autotest-${Math.random().toString(36).slice(2, 7)}`,
+  generic: (ctx) => (ctx.kind === 'number' ? String(intBetween(1, 999)) : `autotest-${Math.random().toString(36).slice(2, 7)}`),
 };
 
 export function generate(ctx: GeneratorCtx): string {
@@ -193,5 +193,7 @@ export function generate(ctx: GeneratorCtx): string {
   }
   if (ctx.kind === 'upload-image') return `[图片 test-${digits(4)}.png]`;
   if (ctx.kind === 'upload-file') return `[文件 test-${digits(4)}.pdf]`;
+  // The value comes from a record picked inside the dialog, not from a generator.
+  if (ctx.kind === 'lookup') return RANDOM_OPTION_PLACEHOLDER;
   return GENERATORS[ctx.semantic](ctx);
 }

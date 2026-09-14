@@ -9,6 +9,7 @@ const OPTION_KINDS = new Set<Kind>([
   'checkbox-group',
   'checkbox',
   'switch',
+  'lookup',
 ]);
 
 export { OPTION_KINDS };
@@ -56,6 +57,7 @@ export function fallbackSemantic(kind: Kind): Semantic {
     case 'checkbox-group':
     case 'checkbox':
     case 'switch':
+    case 'lookup':
       return 'enum';
     case 'email':
       return 'email';

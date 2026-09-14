@@ -1,6 +1,7 @@
 import type { ContentRequest, ContentResponse, FieldDTO, FillResult, GenRules, ScanResult } from '../shared/types';
 import { DEFAULT_GEN_RULES } from '../shared/types';
 import { scanDocument, scanRevealed, type FieldCandidate } from '../core/scan';
+import { walkScroll } from '../core/scan/scroll';
 import { inferSemantic, credentialSemantic } from '../core/semantics/infer';
 import { currentOptionText, resolveCredentialLink, resolveGeoLink } from '../core/semantics/link';
 import { coordForText } from '../core/generators/geo';
@@ -23,26 +24,55 @@ function bootstrap(): void {
   const makeValue = (cand: FieldCandidate, semantic: FieldDTO['semantic'], rules: GenRules) =>
     generate({ kind: cand.kind, semantic, label: cand.label, optionTexts: cand.optionTexts, rules });
 
-  const handleScan = (rules: GenRules): ScanResult => {
+  const register = (cand: FieldCandidate, rules: GenRules): FieldDTO => {
+    const id = `f${seq++}`;
+    const semantic = inferSemantic(
+      `${cand.label} ${cand.root.getAttribute('name') ?? ''} ${cand.root.id}`,
+      cand.kind,
+    );
+    const value = cand.skipped ? '' : makeValue(cand, semantic, rules);
+    const dto: FieldDTO = { id, label: cand.label, kind: cand.kind, semantic, value, optionTexts: cand.optionTexts, skipped: cand.skipped, reason: cand.reason };
+    fields.set(id, { cand, dto });
+    return dto;
+  };
+
+  const knownTargets = (): Element[] => {
+    const out: Element[] = [];
+    for (const rt of fields.values()) {
+      out.push(rt.cand.root, ...rt.cand.targets);
+    }
+    return out;
+  };
+
+  // Fields absorbed while scrolling are appended out of order; sort by document
+  // position so the popup list matches what the user sees on the page.
+  const byDocumentOrder = (a: FieldDTO, b: FieldDTO): number => {
+    const ra = fields.get(a.id)?.cand.root;
+    const rb = fields.get(b.id)?.cand.root;
+    if (!ra || !rb || ra === rb) return 0;
+    return ra.compareDocumentPosition(rb) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  };
+
+  const handleScan = async (rules: GenRules): Promise<ScanResult> => {
     lastRules = rules;
     fields.clear();
     credLinks.clear();
     geoLinks.clear();
     snapshots = [];
-    const candidates = scanDocument(document);
     const result: ScanResult = { fields: [], skipped: [] };
-    for (const cand of candidates) {
-      const id = `f${seq++}`;
-      const semantic = inferSemantic(
-        `${cand.label} ${cand.root.getAttribute('name') ?? ''} ${cand.root.id}`,
-        cand.kind,
-      );
-      const value = cand.skipped ? '' : makeValue(cand, semantic, rules);
-      const dto: FieldDTO = { id, label: cand.label, kind: cand.kind, semantic, value, optionTexts: cand.optionTexts, skipped: cand.skipped, reason: cand.reason };
-      fields.set(id, { cand, dto });
-      if (cand.skipped) result.skipped.push(dto);
-      else result.fields.push(dto);
-    }
+    const collect = (cand: FieldCandidate) => {
+      const dto = register(cand, rules);
+      (dto.skipped ? result.skipped : result.fields).push(dto);
+    };
+    for (const cand of scanDocument(document)) collect(cand);
+    // Sections further down may not be mounted yet (lazy render / content-visibility),
+    // so walk the page once and absorb whatever appears along the way.
+    await walkScroll(async () => {
+      const revealed = scanRevealed(knownTargets());
+      for (const cand of revealed) collect(cand);
+      return revealed.length;
+    });
+    result.fields.sort(byDocumentOrder);
     const active = result.fields.map((dto) => fields.get(dto.id)!);
     credLinks = resolveCredentialLink(active, rules);
     geoLinks = resolveGeoLink(active, rules);
@@ -84,6 +114,28 @@ function bootstrap(): void {
     return value;
   };
 
+  // Values written by a fill can mount controls that did not exist at scan time
+  // (conditional sections, or blocks that only render once scrolled into view).
+  // Register and fill whatever newly appeared; returns how many were found.
+  const fillRevealed = async (overwrite: boolean, results: FillResult[]): Promise<number> => {
+    const revealed = scanRevealed(knownTargets());
+    for (const cand of revealed) {
+      const dto = register(cand, lastRules);
+      if (!overwrite && hasExistingValue(cand)) {
+        results.push({ id: dto.id, ok: true });
+        continue;
+      }
+      snapshots.push(...takeSnapshot(cand.targets));
+      try {
+        await fillCandidate(cand, dto.value);
+        results.push({ id: dto.id, ok: true });
+      } catch (err) {
+        results.push({ id: dto.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return revealed.length;
+  };
+
   const handleFill = async (cmds: { id: string; value: string }[], overwrite: boolean): Promise<FillResult[]> => {
     snapshots = [];
     const results: FillResult[] = [];
@@ -95,53 +147,28 @@ function bootstrap(): void {
         continue;
       }
       if (!overwrite && hasExistingValue(rt.cand)) {
-        results.push({ id: cmd.id, ok: true });
+        results.push({ id: rt.dto.id, ok: true });
         continue;
       }
       snapshots.push(...takeSnapshot(rt.cand.targets));
       try {
         await fillCandidate(rt.cand, cmd.value);
-        results.push({ id: cmd.id, ok: true });
+        results.push({ id: rt.dto.id, ok: true });
       } catch (err) {
-        results.push({ id: cmd.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+        results.push({ id: rt.dto.id, ok: false, error: err instanceof Error ? err.message : String(err) });
       }
       if (++sinceYield >= 50) {
         sinceYield = 0;
         await new Promise((r) => requestAnimationFrame(r));
       }
     }
-    // Values written above can render conditionally-shown controls (e.g. choosing
-    // 生产性企业 reveals the 产线 count inputs) that were absent at scan time and so
-    // missing from `fields`. Re-scan and fill whatever newly appeared; bounded rounds
-    // keep a reveal cascade from looping forever.
+    // Bounded rounds keep a reveal cascade from looping forever; the scroll walk then
+    // picks up blocks that only mount once they come into view.
     for (let round = 0; round < 2; round++) {
       await new Promise((r) => requestAnimationFrame(r));
-      const known: Element[] = [];
-      for (const rt of fields.values()) known.push(...rt.cand.targets);
-      const revealed = scanRevealed(known);
-      if (!revealed.length) break;
-      for (const cand of revealed) {
-        const id = `f${seq++}`;
-        const semantic = inferSemantic(
-          `${cand.label} ${cand.root.getAttribute('name') ?? ''} ${cand.root.id}`,
-          cand.kind,
-        );
-        const value = makeValue(cand, semantic, lastRules);
-        const dto: FieldDTO = { id, label: cand.label, kind: cand.kind, semantic, value, optionTexts: cand.optionTexts };
-        fields.set(id, { cand, dto });
-        if (!overwrite && hasExistingValue(cand)) {
-          results.push({ id, ok: true });
-          continue;
-        }
-        snapshots.push(...takeSnapshot(cand.targets));
-        try {
-          await fillCandidate(cand, value);
-          results.push({ id, ok: true });
-        } catch (err) {
-          results.push({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
-        }
-      }
+      if (!(await fillRevealed(overwrite, results))) break;
     }
+    await walkScroll(() => fillRevealed(overwrite, results), { maxSteps: 15 });
     return results;
   };
 
@@ -174,8 +201,8 @@ function bootstrap(): void {
           reply({ pong: true });
           break;
         case 'scan':
-          reply(handleScan(msg.rules));
-          break;
+          handleScan(msg.rules).then(reply, fail);
+          return true;
         case 'regen':
           reply({ value: handleRegen(msg.id, msg.rules) });
           break;

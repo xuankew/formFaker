@@ -1,5 +1,5 @@
 import type { Kind } from '../../shared/types';
-import { WIDGET_SELECTOR, classifyWidget } from './selectors';
+import { WIDGET_SELECTOR, classifyWidget, findLookupTrigger } from './selectors';
 import { buildLabelIndex, cleanLabel, labelTextFor } from './label';
 import { classifyNative, isDisabled, isVisible } from './classify';
 import { LNGLAT_RE } from '../semantics/rules';
@@ -11,6 +11,8 @@ export interface FieldCandidate {
   targets: HTMLElement[];
   optionTexts?: string[];
   accept?: string;
+  // Element to click to open a picker dialog; only set for kind 'lookup'.
+  trigger?: HTMLElement;
   skipped?: boolean;
   reason?: string;
 }
@@ -140,6 +142,15 @@ export function scanDocument(doc: Document): FieldCandidate[] {
       // but still need a value, so keep them fillable instead of skipping.
       if (LNGLAT_RE.test(label)) {
         push({ label, kind, root: el, targets: [el] });
+        continue;
+      }
+      // A readonly input with a picker affordance is not dead: its value comes from a
+      // dialog (清算会员号 / 联行号 等), so keep it fillable as a lookup field.
+      const trigger = kind === 'text' && (el as HTMLInputElement).readOnly && !el.matches(':disabled')
+        ? findLookupTrigger(el)
+        : null;
+      if (trigger) {
+        push({ label, kind: 'lookup', root: el, targets: [el], trigger });
         continue;
       }
       push({ label, kind, root: el, targets: [], skipped: true, reason: '禁用/只读' });

@@ -1,7 +1,8 @@
 import type { FieldCandidate } from '../scan';
 import { FILL_SELECTORS } from '../scan/selectors';
 import { RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
-import { blur, isVisibleEl, pressEnter, realClick, restoreSnapshot, setNativeValue, sleep, takeSnapshot, visibleAll, waitUntil, type Snapshot } from './dom';
+import { blur, ensureInView, isVisibleEl, pressEnter, realClick, restoreSnapshot, setNativeValue, sleep, takeSnapshot, visibleAll, waitUntil, type Snapshot } from './dom';
+import { fillLookup } from './lookup';
 import { makeTestFile } from './files';
 import { loadFilePool, pickPoolFile, poolEntryToFile } from './filepool';
 
@@ -121,7 +122,11 @@ async function fillUpload(cand: FieldCandidate): Promise<void> {
 
 export async function fillCandidate(cand: FieldCandidate, value: string): Promise<void> {
   const [primary] = cand.targets;
+  ensureInView(cand.root);
   switch (cand.kind) {
+    case 'lookup':
+      await fillLookup(cand);
+      return;
     case 'text':
     case 'textarea':
     case 'number':
@@ -338,6 +343,11 @@ export async function clearCandidate(cand: FieldCandidate): Promise<boolean> {
         return true;
       }
       return clearWidget(cand);
+    }
+    case 'lookup': {
+      // Readonly input: only the widget's own clear affordance resets the bound model.
+      const wrap = cand.root.closest('.el-input, .ant-input-affix-wrapper, .ant-input-group-wrapper');
+      return clearWidget({ ...cand, root: wrap ?? cand.root });
     }
     case 'select-widget':
     case 'cascader':

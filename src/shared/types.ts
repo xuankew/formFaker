@@ -19,7 +19,8 @@ export type Kind =
   | 'switch'
   | 'upload-image'
   | 'upload-file'
-  | 'richtext';
+  | 'richtext'
+  | 'lookup';
 
 export type Semantic =
   | 'phone'

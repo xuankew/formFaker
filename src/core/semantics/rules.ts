@@ -14,7 +14,7 @@ export const SEMANTIC_RULES: { semantic: Semantic; re: RegExp }[] = [
   { semantic: 'bankCard', re: /银行卡|银行账号|开户|bank\s*card|account\s*no|账号/ },
   { semantic: 'zipcode', re: /邮编|postal|zip/ },
   { semantic: 'url', re: /网址|官网|网站|website|url|link/ },
-  { semantic: 'company', re: /公司|企业名|单位名称|供应商名称|company|vendor|supplier/ },
+  { semantic: 'company', re: /公司|企业名|单位名称|供应商名称|合作客户|客户名称|客户单位|company|vendor|supplier/ },
   { semantic: 'cnName', re: /姓名|联系人|法定代表人|负责人|收货人|name/ },
   { semantic: 'lnglat', re: LNGLAT_RE },
   { semantic: 'region', re: /地区|区域|省市|所在地|region|area|province|city/ },
@@ -22,7 +22,7 @@ export const SEMANTIC_RULES: { semantic: Semantic; re: RegExp }[] = [
   { semantic: 'gender', re: /性别|gender/ },
   { semantic: 'education', re: /学历|学位|education/ },
   { semantic: 'amount', re: /金额|资本|资金|价格|费用|单价|总价|营业额|营收|销售额|收入|利润|产值|amount|price|capital|fee|fund|[（(]元[）)]/ },
-  { semantic: 'integer', re: /数量|人数|个数|件数|人员|年限|年数|工龄|司龄|count|qty|quantity|[（(](条|年|个|台|人|名|次|套|家|项|支)[）)]/ },
+  { semantic: 'integer', re: /数量|人数|个数|件数|人员|年限|年数|工龄|司龄|区号|count|qty|quantity|areacode|[（(](条|年|个|台|人|名|次|套|家|项|支)[）)]/ },
   { semantic: 'paragraph', re: /备注|说明|简介|描述|范围|理由|remark|desc|note|comment/ },
   { semantic: 'date', re: /日期|时间|date|time/ },
 ];
