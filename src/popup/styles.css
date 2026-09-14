@@ -1,0 +1,47 @@
+* { box-sizing: border-box; }
+/* Chrome caps action popups at 800x600; pin the body so the popup opens at a
+   usable, stable size instead of collapsing to content height. */
+html, body { width: 400px; height: 600px; }
+body {
+  margin: 0;
+  font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #24292f;
+  background: #fafbfc;
+}
+.app { display: flex; flex-direction: column; height: 100vh; }
+header, .toolbar, footer {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px; background: #fff; border-bottom: 1px solid #e4e7eb;
+}
+footer { border-bottom: none; border-top: 1px solid #e4e7eb; }
+.spacer { flex: 1; }
+button {
+  border: 1px solid #d0d7de; background: #f6f8fa; border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+button:hover:not(:disabled) { background: #eef1f4; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.icon { padding: 2px 7px; }
+.toolbar { border-bottom: none; padding-bottom: 0; background: transparent; align-items: flex-start; }
+.overwrite { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.status { flex: 1; color: #57606a; font-size: 12px; }
+main { flex: 1; overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.row {
+  background: #fff; border: 1px solid #e4e7eb; border-radius: 8px;
+  padding: 8px; content-visibility: auto;
+}
+.row.error { border-color: #d1242f; }
+.line1 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.label { font-weight: 600; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip {
+  font-size: 11px; color: #57606a; background: #f0f2f4;
+  border-radius: 10px; padding: 1px 8px; white-space: nowrap;
+}
+.chip.semantic { color: #0969da; background: #ddf4ff; }
+.value {
+  width: 100%; margin-top: 6px; padding: 5px 8px;
+  border: 1px solid #d0d7de; border-radius: 6px; font-size: 12px;
+}
+.err { color: #d1242f; font-size: 12px; margin-top: 4px; }
+.empty, .skipped-row { color: #57606a; padding: 6px 2px; }
+details summary { cursor: pointer; color: #57606a; padding: 4px 0; }

@@ -1,0 +1,33 @@
+{
+  "name": "formfaker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome extension that recognizes form controls and fills them with realistic random test data",
+  "scripts": {
+    "build": "vite build && node scripts/build-workers.mjs",
+    "dev:pages": "vite build --watch",
+    "dev:workers": "node scripts/build-workers.mjs --watch",
+    "region": "node scripts/build-region.mjs",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "china-division": "^2.7.0",
+    "element-plus": "^2.9.11",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "vue": "^3.5.16"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.0",
+    "esbuild": "^0.25.4",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
+  }
+}

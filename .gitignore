@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# build output (reproducible via `pnpm build`)
+dist/
+
+# test coverage
+coverage/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local tooling
+.qoder/
