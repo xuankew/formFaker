@@ -73,7 +73,7 @@ function mountLookup(dialogHtml: string, onConfirm: (row: HTMLTableRowElement) =
   trigger.addEventListener('click', () => {
     dialog.style.display = '';
   });
-  const footer = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === '确定')!;
+  const footer = Array.from(dialog.querySelectorAll('button')).find((b) => /确\s*定/.test(b.textContent ?? ''))!;
   footer.addEventListener('click', () => {
     const row = dialog.querySelector('tbody tr') as HTMLTableRowElement;
     input.value = onConfirm(row);
@@ -136,5 +136,42 @@ describe('lookup fill', () => {
     await expect(fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER)).rejects.toThrow('弹窗内没有可选记录');
     expect(closed).toBe(1);
     expect(dialog.style.display).toBe('none');
+  });
+
+  it('waits for records that arrive after the dialog opens', async () => {
+    const { input, cand, dialog } = mountLookup(DIALOG_HTML, (row) => row.cells[1].textContent ?? '');
+    dialog.querySelector('tbody')!.innerHTML = '';
+    dialog.querySelector('.el-dialog__headerbtn')!.addEventListener('click', () => { dialog.style.display = 'none'; });
+    const trigger = document.querySelector('.el-icon-search') as HTMLElement;
+    trigger.addEventListener('click', () => {
+      setTimeout(() => {
+        dialog.querySelector('tbody')!.innerHTML = '<tr><td></td><td>C777</td></tr>';
+      }, 200);
+    });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('C777');
+  });
+
+  it('recognises a confirm button whose label carries whitespace', async () => {
+    const spaced = DIALOG_HTML.replace('>确定</button>', '>确 定</button>');
+    const { input, cand } = mountLookup(spaced, (row) => row.cells[1].textContent ?? '');
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('A001');
+  });
+
+  it('falls back to clicking the row when the radio wrapper swallows the click', async () => {
+    const wrapped = DIALOG_HTML.replace(
+      /<input type="radio" name="pick" \/>/g,
+      '<span class="el-radio"><input type="radio" name="pick" /></span>',
+    );
+    const { input, cand, dialog } = mountLookup(wrapped, (row) => row.cells[1].textContent ?? '');
+    const firstRow = dialog.querySelector('tbody tr') as HTMLElement;
+    let directRowClicks = 0;
+    // The wrapper click bubbles up to the row as well; only a click aimed at the row
+    // itself proves the fallback ran.
+    firstRow.addEventListener('click', (e) => { if (e.target === firstRow) directRowClicks++; });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(directRowClicks).toBe(1);
+    expect(input.value).toBe('A001');
   });
 });

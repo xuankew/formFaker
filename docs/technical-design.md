@@ -191,7 +191,7 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 | richtext | `el.innerHTML = '<p>…</p>'` + `InputEvent('input')`（Quill/wangEditor 的 MutationObserver 会自同步） |
 | lookup | 点触发图标开弹窗 → 选第一条记录 → 确定 → 校验回填（`fillLookup`，见下） |
 
-**lookup 填充流程（`core/fill/lookup.ts`）**：先记录页面上已可见的弹窗集合（`.el-dialog/.el-drawer/.ant-modal-content/.ant-drawer-content/[role=dialog]`），`ensureInView` + `realClick(trigger)` 后等新弹窗出现（3s 超时 → 抛「点击后未弹出选择窗口」）；弹窗内取可选行（`.el-table__body tbody tr`、`.ant-table-tbody tr`、`table tbody tr`、`[role=row]`、`.el-dialog__body li`，过滤表头行/空行/不可见行），空则先点「查询/搜索」按钮再等（仍空 → 抛「弹窗内没有可选记录」）；点第一行的 radio/checkbox（无则点整行），再点文本为 确定/确认/保存/选择/提交/ok/confirm 的按钮，找不到确认按钮则改为整行 click + dblclick；随后 `waitUntil` 输入框有值（2s → 抛「选择后未回填到输入框」）。**无论成功失败，`finally` 都关闭弹窗**（点头部关闭按钮，否则派发 Escape），避免遗留遮罩挡住后续字段。
+**lookup 填充流程（`core/fill/lookup.ts`）**：先记录页面上已可见的弹窗集合（`.el-dialog/.el-drawer/.ant-modal-content/.ant-drawer-content/[role=dialog]`），`ensureInView` + `realClick(trigger)` 后等新弹窗出现（3s 超时 → 抛「点击后未弹出选择窗口」）。弹窗内取可选行（`.el-table__body tbody tr`、`.ant-table-tbody tr`、`table tbody tr`、`[role=row]`、`.el-dialog__body li`，过滤表头行/空行/不可见行）：**记录通常是弹窗打开后才异步请求回来的，故先等 1.5s 让行到达**，仍为空才点「查询/搜索」按钮（再等 3s），两者都拿不到行 → 抛「弹窗内没有可选记录（可能需要先填查询条件）」。选中第一行时优先点 `.el-radio/.ant-radio-wrapper/.el-checkbox` 包裹层或原生 radio/checkbox，点完检查 `checked`——**框架包裹层可能吞掉这次点击，未勾中就回退点整行**。随后点确认按钮，找不到则改为整行 click + dblclick。**按钮文案匹配去空白后做包含判断**（页脚常渲染成「确 定」，图标按钮还会带多余空格），命中 `确定/确认/保存/选定/选择/提交/ok/confirm`，并**先排除** `取消/关闭/返回/清除/重置/cancel/close/reset`，且**页脚（`.el-dialog__footer` 等）优先于弹窗内其他按钮**，避免误点表格行内的同名按钮。最后校验回填：输入框有值**或弹窗已自行关闭**都算成功（确认后框架可能重渲染，旧 input 引用已脱离文档、永远读不到值），2.5s 内两者都没发生 → 抛「选择后未回填到输入框」。**无论成功失败，`finally` 都关闭弹窗**（点头部关闭按钮，否则派发 Escape），避免遗留遮罩挡住后续字段。
 
 **lookup 清除**：只读输入框写不进去，只有组件自带的清除图标能重置绑定模型，故 `clearCandidate` 把 `root` 换成 `closest('.el-input, .ant-input-affix-wrapper, .ant-input-group-wrapper')` 后走通用 widget 清除路径（聚焦/悬停揭示 × 再点击）。
 
@@ -266,7 +266,7 @@ dist 即加载目录：`manifest.json`、`background.js`、`content.js`、`popup
   5. 经纬度（`test/geo.test.ts`）：lnglat 语义推断；禁用坐标框被白名单放行而其他禁用字段仍跳过；`coordForText` 确定性 + 落在对应省 bbox 内 + 无已知省时返回 null；`resolveGeoLink` 令 lnglat 值等于 `coordForText(地址值)`，且**表单作用域**配对——多表单页里链到同表单地址而非全局第一个地址类字段。
   6. 表格列头标签（`test/table.test.ts`，6 例）：普通表格单元格取列头；取到后语义正确（姓名→cnName、手机号→phone、电子邮箱→email、银行账号→bankCard）；EP 表头/表体分离在兄弟 `<table>` 时仍能关联；`colspan` 展开列号 + 多级表头自下而上回溯；ARIA 网格经 `aria-colindex` 与 `headers` 属性；优先级——form-item 标签与包裹 `<label>` 胜过列头，非表格字段不受影响，无表格时仍回退 placeholder。
   7. 滚动累积（`test/scroll.test.ts`，5 例）：用 `Object.defineProperty` 伪造 `scrollHeight/clientHeight`——步进到最大值后恢复原 `scrollTop`；连续无新增恰在第 4 步退出；`maxSteps` 生效；懒挂载控件只被收集一次（已知集合需像运行时那样增长）；无可滚动容器时为 no-op（仅 1 步）。
-  8. 弹窗选择（`test/lookup.test.ts`，9 例）：识别——只读框 + suffix 图标 → `lookup` 且带 trigger；包裹层外的兄弟「选择」按钮 → `lookup`；只读/禁用但无触发器 → skipped「禁用/只读」；可编辑框带搜索图标仍是 `text`。生成——`generate({kind:'lookup'})` 返回占位标记。填充——开弹窗选第一条 + 确定后输入框写入且弹窗隐藏；列表为空时先点「查询」再选中；无弹窗时 3s 内抛「点击后未弹出选择窗口」；无可选记录时抛错**且关闭按钮被点过一次**（不留遮罩挡后续字段）。用例需把 `getBoundingClientRect` 打桩为非零矩形——jsdom 恒返回 0×0，填充引擎会据此判为不可见。
+  8. 弹窗选择（`test/lookup.test.ts`，12 例）：识别——只读框 + suffix 图标 → `lookup` 且带 trigger；包裹层外的兄弟「选择」按钮 → `lookup`；只读/禁用但无触发器 → skipped「禁用/只读」；可编辑框带搜索图标仍是 `text`。生成——`generate({kind:'lookup'})` 返回占位标记。填充——开弹窗选第一条 + 确定后输入框写入且弹窗隐藏；列表为空时先点「查询」再选中；**记录在弹窗打开 200ms 后才到达（无查询按钮）仍能选中**；**页脚文案为「确 定」时仍被认成确认按钮**；**radio 包裹层吞掉点击（原生 input 未勾中）时回退点整行**；无弹窗时 3s 内抛「点击后未弹出选择窗口」；无可选记录时抛错**且关闭按钮被点过一次**（不留遮罩挡后续字段）。用例需把 `getBoundingClientRect` 打桩为非零矩形——jsdom 恒返回 0×0，填充引擎会据此判为不可见；断言回退点行时只统计 `target` 为行本身的点击，因为包裹层的 click 会冒泡到行。
 - 手工：demo 页（原生区 + Element Plus 真实组件区，含 cascader/date/upload/switch、「注册地址 + 禁用经纬度」联动样例、「企业生产类型→v-if 揭示产线数量」条件渲染样例，以及本轮新增的**联系人表格区**（姓名/角色/区号/手机号/电子邮箱 + 添加一行）、**清算会员号弹窗选择样例**（只读框 + 🔍 → el-dialog 内 el-table 单选 + 确定）、**1100px 占位 + IntersectionObserver 懒挂载区**（供应商产能/产线/合作客户/意向物料））加载扩展全流程；联动、条件渲染、表格列头、弹窗选择、滚动懒挂载均已用 dev harness（`window.__ff`）在真实浏览器端到端验证：扫描 44 项、表格内 姓名/手机号/电子邮箱 写入 Vue `model.contacts`、区号按 integer 生成、清算会员号选得 `QX0001` 且遮罩关闭、懒挂载四字段全部填入 `model.lazy`、滚动位置复位 `scrollY: 0`、无字段报错；SRM 风格长表单截图页人工核对覆盖率。
   - 懒挂载样例的教训：占位锚点若高度为 0 且正好落在视口底边，`IntersectionObserver` 永不触发——锚点需给 1px 高度并配 `rootMargin`。这是 fixture 写法问题，非 `walkScroll` 缺陷（遍历确实滚到底并复位了）。
 - 缺口明示：Ant Design 路径与真实浏览器事件序列无自动化覆盖，依赖 demo 人工 + 选择器集中配置降低维护成本。
@@ -283,7 +283,7 @@ dist 即加载目录：`manifest.json`、`background.js`、`content.js`、`popup
 | 经纬度坐标精度（当前为省级行政中心，非市/区级） | `geo.ts` 为单文件替换点：把真实城市质心表填入 `CITY_CENTERS` 即升级精度，无需改其他代码；坐标全程离线推导，无网络/隐私风险 |
 | 虚拟滚动表格（`el-table-v2`、AntD `virtual`）只渲染视口内行 | 列头关联对已渲染行有效；未渲染行需边滚边扫表格内部容器，列入 V1.1（`walkScroll` 已把 `.el-table__body-wrapper` 纳入滚动容器，可作基础） |
 | 动态增减行表格（「+ 添加一行」）只填当前已渲染行 | MVP 明确不自动点新增按钮；行数不足时用户先手动加行再识别，自动加行列入 V1.1 |
-| 弹窗选择型字段可能强制要求先输入查询条件才有记录 | `fillLookup` 会先尝试点「查询/搜索」；仍无记录则抛「弹窗内没有可选记录」并关闭弹窗，错误回传面板标红，不留遮罩阻塞后续字段 |
+| 弹窗选择型字段可能强制要求先输入查询条件才有记录 | `fillLookup` 先等记录异步到达，再尝试点「查询/搜索」；仍无记录则抛「弹窗内没有可选记录（可能需要先填查询条件）」并关闭弹窗，错误回传面板标红，不留遮罩阻塞后续字段 |
 
 ## 14. 里程碑
 
