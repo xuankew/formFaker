@@ -193,3 +193,13 @@ export function scanDocument(doc: Document): FieldCandidate[] {
 
   return out;
 }
+
+// Controls that only render after an earlier scan (e.g. revealed once a parent
+// select/radio is filled) are absent from the scan-time field map. Re-scan and return
+// just the new, fillable candidates so a fill pass can top them up.
+export function scanRevealed(knownTargets: Iterable<Element>): FieldCandidate[] {
+  const known = new Set(knownTargets);
+  return scanDocument(document).filter(
+    (c) => !c.skipped && c.targets.length > 0 && !c.targets.some((t) => known.has(t)),
+  );
+}

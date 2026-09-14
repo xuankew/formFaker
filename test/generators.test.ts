@@ -50,10 +50,25 @@ describe('generators', () => {
   });
 
   it('amount for capital/fund labels is whole yuan', () => {
-    for (const label of ['注册资本（单位:元）', '实缴资金（单位:元）']) {
+    for (const label of ['注册资本（单位:元）', '实缴资金（单位:元）', '上年度营业额（元）']) {
       const v = GENERATORS.amount(ctx('amount', { label }));
       expect(v).toMatch(/^\d+$/);
       expect(Number(v) % 10000).toBe(0);
+    }
+  });
+
+  it('integer year-counts stay plausible while plain counts use the wide range', () => {
+    for (const label of ['行业年限（年）', '实际运营时间（年）', '生产及品控管理年限（年）']) {
+      for (let i = 0; i < 30; i++) {
+        const v = GENERATORS.integer(ctx('integer', { label }));
+        expect(Number(v)).toBeGreaterThanOrEqual(1);
+        expect(Number(v)).toBeLessThanOrEqual(30);
+      }
+    }
+    for (const label of ['可供应产线（条）', '专职研发人员']) {
+      const v = GENERATORS.integer(ctx('integer', { label }));
+      expect(Number(v)).toBeGreaterThanOrEqual(1);
+      expect(Number(v)).toBeLessThanOrEqual(999);
     }
   });
 

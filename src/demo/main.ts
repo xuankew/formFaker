@@ -35,6 +35,15 @@ const template = `
     <div><label for="n-date">成立日期</label><input id="n-date" type="date" /></div>
     <div><label for="n-addr">注册地址</label><input id="n-addr" type="text" /></div>
     <div><label for="n-lnglat">经纬度</label><input id="n-lnglat" type="text" disabled placeholder="110.121140,37.088900" /></div>
+    <div><label for="n-prodtype">企业生产类型</label>
+      <select id="n-prodtype" v-model="model.prodType">
+        <option value="">请选择</option><option>生产性企业</option><option>贸易性企业</option>
+      </select>
+    </div>
+    <template v-if="model.prodType === '生产性企业'">
+      <div><label for="n-lines">生产现场产线总数量（条）</label><input id="n-lines" type="text" /></div>
+      <div><label for="n-lines-supply">可供应产线（条）</label><input id="n-lines-supply" type="text" /></div>
+    </template>
     <div><label for="n-region-select">纳税类别</label>
       <select id="n-region-select">
         <option value="">请选择</option><option>一般纳税人</option><option>小规模纳税人</option>
@@ -117,6 +126,7 @@ const app = createApp({
     const model = reactive({
       name: '', nature: '', scope: [] as string[], region: [] as string[], found: '',
       range: null as string[] | null, staff: 1, tax: '', cate: [] as string[], on: false, account: '',
+      prodType: '',
     });
     const dump = () => {
       console.log('[demo] element-plus model =', JSON.parse(JSON.stringify(model)));

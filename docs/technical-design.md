@@ -147,7 +147,7 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 - **lnglat（`geo.ts`）**：离线推导坐标，无任何网络请求。`coordForText(text)` 用 `parseRegionNames` 从地址串里匹配省/市名（对照 region-data 的 PROVINCES/CITIES 表），再经 `cityCenter(province, city)` 返回 6 位小数 `lng,lat` 串。`cityCenter` 先查 `CITY_CENTERS[city]` 精确质心，未命中回退 `PROVINCE_CENTERS[province]`（已种子化 34 个省级行政中心），再回退全国中心；并叠加由字符串 hash 决定的确定性抖动（经度跨度 ~1.0、纬度 ~0.8），避免同名城市塌缩到同一点。**精度现状**：`CITY_CENTERS` 目前为空，是单文件替换点——坐标为省级行政中心精度，非市/区级；把真实城市质心表填入 `CITY_CENTERS` 即可升级精度，无需改动其他代码。无地址兄弟字段时，独立 `lnglat` 生成器随机取一条 region 路径并返回其质心。
 - **company**：城市名 + 字号池(2 字) + 行业池 + 组织形式池。
 - **date/datetime/daterange**：合理区间（成立日期类语义偏历史，通用语义近 ±3 年）；格式随 kind。
-- **amount/integer**：label 含 资本/资金/人数/数量 时按整数元（1万~5亿 的整万）生成，适配「注册资本/实缴资金（单位:元）」类校验；其余金额 1万~5亿 两位小数；数量 1~999 整数。
+- **amount/integer**：label 含 资本/资金/人数/数量/营业额/营收/销售额/收入/利润/产值 或带单位后缀（元）时按整数元（1万~5亿 的整万）生成，适配「注册资本/实缴资金（单位:元）」「上年度营业额（元）」类校验；其余金额 1万~5亿 两位小数。integer 识别 人数/人员/数量/个数/件数/年限/年数/工龄/司龄 及带单位后缀（条/年/个/台/人/名/次/套/家/项/支，**不含元**以免金额被当计数），且规则排在 date 之前——「实际运营时间（年）」因此按年数而非日期；年限类生成 1~30 的合理年数，其余计数 1~999 整数。
 - **paragraph**：句池随机 2~4 句拼接（50~150 字）。
 - **enum（选项驱动）**：`optionTexts` 非空时优先语义匹配（如 gender→男/女），否则随机一项；组件库选项在填充时读取，生成阶段返回空标记。
 - **image/file**：值仅为展示占位（`[图片 test-xxxx.png]`）；真实 File 在填充阶段按「文件池优先 + 合成回退」生成：
@@ -185,6 +185,10 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 ### 7.3 批量节奏
 
 原生类字段每 50 个一片夹 `requestAnimationFrame`，避免长任务；widget 类天然串行（各自 await 展开）。
+
+### 7.4 条件渲染字段补填（scanRevealed）
+
+向导式表单里，某些区块只在父级下拉/单选被赋值后才渲染（如「企业生产类型=生产性企业」才出现产线数量输入框）。这类控件在 scan 时还不存在，字段表里没有它们，单次 fill 会漏填。`handleFill` 在主循环后追加补填轮：调用 core 的 `scanRevealed(knownTargets)`——重扫文档并只返回「非 skipped 且 fill targets 不在已跟踪集合内」的新候选；为每个新候选在字段表登记 id/语义/生成值，取快照并填充。每轮前等一帧 `requestAnimationFrame` 让框架完成渲染；最多 2 轮以约束级联揭示。新字段进入字段表，故清除/撤销覆盖它们；Popup 列表不自动刷新（以页面实际值为准）。
 
 ## 8. 运行时
 
@@ -229,10 +233,10 @@ dist 即加载目录：`manifest.json`、`background.js`、`content.js`、`popup
 - 单测（vitest+jsdom）：
   1. 生成器：phone 号段正则、idNumber/creditCode/bankCard 校验位函数反验、region 路径层级合法、daterange 起<止。
   2. 语义推断：fixture 标签（受理组织/联系电话/注册资本/注册地区…）命中期望语义；优先级用例（手机 vs 电话）。
-  3. 控件分类：fixture HTML（原生 + Element/Ant 类名结构）→ kind 矩阵断言；disabled/hidden 过滤。
+  3. 控件分类：fixture HTML（原生 + Element/Ant 类名结构）→ kind 矩阵断言；disabled/hidden 过滤；`scanRevealed` 条件渲染补扫——初扫后新插入的控件恰被返回一次、可填充、更新已知集合后二轮为空。
   4. 原生填充：jsdom 中 setNativeValue 后 input 收到事件且 value 生效；select/checkbox/radio 路径。
   5. 经纬度（`test/geo.test.ts`）：lnglat 语义推断；禁用坐标框被白名单放行而其他禁用字段仍跳过；`coordForText` 确定性 + 落在对应省 bbox 内 + 无已知省时返回 null；`resolveGeoLink` 令 lnglat 值等于 `coordForText(地址值)`，且**表单作用域**配对——多表单页里链到同表单地址而非全局第一个地址类字段。
-- 手工：demo 页（原生区 + Element Plus 真实组件区，含 cascader/date/upload/switch，及「注册地址 + 禁用经纬度」联动样例）加载扩展全流程；该联动样例已经 dev harness（`window.__ff`）在真实浏览器端到端验证（扫描白名单、同表单配对、禁用框实际写入、坐标格式与地址一致）；SRM 风格长表单截图页人工核对覆盖率。
+- 手工：demo 页（原生区 + Element Plus 真实组件区，含 cascader/date/upload/switch、「注册地址 + 禁用经纬度」联动样例、以及「企业生产类型→v-if 揭示产线数量」条件渲染样例）加载扩展全流程；联动与条件渲染样例均已用 dev harness（`window.__ff`）在真实浏览器端到端验证（扫描白名单、同表单配对、禁用框写入、坐标一致；条件字段初扫不存在→父级赋值后渲染→scanRevealed 精确返回→填入数字→二轮为空）；SRM 风格长表单截图页人工核对覆盖率。
 - 缺口明示：Ant Design 路径与真实浏览器事件序列无自动化覆盖，依赖 demo 人工 + 选择器集中配置降低维护成本。
 
 ## 13. 风险与对策

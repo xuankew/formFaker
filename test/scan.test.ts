@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { scanDocument } from '../src/core/scan';
+import { scanDocument, scanRevealed } from '../src/core/scan';
+import { fillCandidate } from '../src/core/fill/strategies';
 
 const fixture = `
 <form>
@@ -97,5 +98,36 @@ describe('scanDocument', () => {
     const selectWidget = fields.filter((f) => f.kind === 'select-widget');
     expect(selectWidget).toHaveLength(2);
     expect(fields.some((f) => f.label === '请选择')).toBe(false);
+  });
+});
+
+describe('scanRevealed (conditionally rendered controls)', () => {
+  it('returns only controls that appeared after the initial scan and lets them be filled', async () => {
+    document.body.innerHTML = `
+      <form id="f">
+        <div><label for="ptype">企业生产类型</label>
+          <select id="ptype"><option value="">请选择</option><option>生产性企业</option></select>
+        </div>
+      </form>`;
+    const initial = scanDocument(document).filter((c) => !c.skipped);
+    const known: Element[] = [];
+    for (const c of initial) known.push(...c.targets);
+
+    // Simulate the framework rendering dependent fields once 生产性企业 is chosen.
+    const form = document.getElementById('f')!;
+    form.insertAdjacentHTML('beforeend', `
+      <div><label for="lines">生产现场产线总数量（条）</label><input id="lines" type="text" /></div>
+      <div><label for="supply">可供应产线（条）</label><input id="supply" type="text" /></div>`);
+
+    const revealed = scanRevealed(known);
+    expect(revealed.map((c) => c.label).sort()).toEqual(['可供应产线（条）', '生产现场产线总数量（条）']);
+
+    for (const cand of revealed) await fillCandidate(cand, '42');
+    expect((document.getElementById('lines') as HTMLInputElement).value).toBe('42');
+    expect((document.getElementById('supply') as HTMLInputElement).value).toBe('42');
+
+    const knownAfter: Element[] = [...known];
+    for (const c of revealed) knownAfter.push(...c.targets);
+    expect(scanRevealed(knownAfter)).toHaveLength(0);
   });
 });

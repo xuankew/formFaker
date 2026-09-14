@@ -1,5 +1,6 @@
 import type { ContentRequest, ContentResponse, FieldDTO, FillResult, GenRules, ScanResult } from '../shared/types';
-import { scanDocument, type FieldCandidate } from '../core/scan';
+import { DEFAULT_GEN_RULES } from '../shared/types';
+import { scanDocument, scanRevealed, type FieldCandidate } from '../core/scan';
 import { inferSemantic, credentialSemantic } from '../core/semantics/infer';
 import { currentOptionText, resolveCredentialLink, resolveGeoLink } from '../core/semantics/link';
 import { coordForText } from '../core/generators/geo';
@@ -17,11 +18,13 @@ function bootstrap(): void {
   let geoLinks = new Map<string, string>();
   let snapshots: Snapshot[] = [];
   let seq = 0;
+  let lastRules: GenRules = DEFAULT_GEN_RULES;
 
   const makeValue = (cand: FieldCandidate, semantic: FieldDTO['semantic'], rules: GenRules) =>
     generate({ kind: cand.kind, semantic, label: cand.label, optionTexts: cand.optionTexts, rules });
 
   const handleScan = (rules: GenRules): ScanResult => {
+    lastRules = rules;
     fields.clear();
     credLinks.clear();
     geoLinks.clear();
@@ -47,6 +50,7 @@ function bootstrap(): void {
   };
 
   const handleRegen = (id: string, rules: GenRules): string => {
+    lastRules = rules;
     const rt = fields.get(id);
     if (!rt) throw new Error(`unknown field ${id}`);
     // lnglat is derived from its address/region source; follow the source rather than
@@ -104,6 +108,38 @@ function bootstrap(): void {
       if (++sinceYield >= 50) {
         sinceYield = 0;
         await new Promise((r) => requestAnimationFrame(r));
+      }
+    }
+    // Values written above can render conditionally-shown controls (e.g. choosing
+    // 生产性企业 reveals the 产线 count inputs) that were absent at scan time and so
+    // missing from `fields`. Re-scan and fill whatever newly appeared; bounded rounds
+    // keep a reveal cascade from looping forever.
+    for (let round = 0; round < 2; round++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const known: Element[] = [];
+      for (const rt of fields.values()) known.push(...rt.cand.targets);
+      const revealed = scanRevealed(known);
+      if (!revealed.length) break;
+      for (const cand of revealed) {
+        const id = `f${seq++}`;
+        const semantic = inferSemantic(
+          `${cand.label} ${cand.root.getAttribute('name') ?? ''} ${cand.root.id}`,
+          cand.kind,
+        );
+        const value = makeValue(cand, semantic, lastRules);
+        const dto: FieldDTO = { id, label: cand.label, kind: cand.kind, semantic, value, optionTexts: cand.optionTexts };
+        fields.set(id, { cand, dto });
+        if (!overwrite && hasExistingValue(cand)) {
+          results.push({ id, ok: true });
+          continue;
+        }
+        snapshots.push(...takeSnapshot(cand.targets));
+        try {
+          await fillCandidate(cand, value);
+          results.push({ id, ok: true });
+        } catch (err) {
+          results.push({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
       }
     }
     return results;

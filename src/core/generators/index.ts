@@ -159,10 +159,10 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
   },
   date: (ctx) => dateFor(ctx, ctx.kind === 'datetime'),
   amount: (ctx) => {
-    if (/资本|资金|人数|数量/.test(ctx.label)) return String(intBetween(100, 50000) * 10000);
+    if (/资本|资金|人数|数量|营业额|营收|销售额|收入|利润|产值|[（(]元[）)]/.test(ctx.label)) return String(intBetween(100, 50000) * 10000);
     return (intBetween(100, 50000000) / 100).toFixed(2);
   },
-  integer: () => String(intBetween(1, 999)),
+  integer: (ctx) => (/年限|年数|工龄|司龄|[（(]年[）)]/.test(ctx.label) ? String(intBetween(1, 30)) : String(intBetween(1, 999))),
   paragraph: () => {
     const n = intBetween(2, 4);
     const shuffled = [...PARAGRAPH_SENTENCES].sort(() => Math.random() - 0.5);
