@@ -314,7 +314,7 @@ const app = createApp({
           URL.revokeObjectURL(url);
           resolve(ok);
         };
-        img.onload = () => done(img.naturalWidth === 480 && img.naturalHeight === 480);
+        img.onload = () => done(file.size <= 50 * 1024 && img.naturalWidth === 480 && img.naturalHeight === 480);
         img.onerror = () => done(false);
         img.src = url;
       });

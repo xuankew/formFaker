@@ -1,5 +1,6 @@
 import type { GenRules, Kind, Semantic } from '../../shared/types';
 import { DEFAULT_GEN_RULES, RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
+import { normalizeEmailDomain } from '../../shared/rules';
 import {
   COMPANY_FORMS, COMPANY_INDUSTRIES, COMPANY_WORDS, EDUCATIONS, EMAIL_DOMAINS, EMAIL_NAMES,
   GIVEN_CHARS, GENDERS, LANDLINE_AREACODES, PARAGRAPH_SENTENCES, PHONE_PREFIXES, STREET_NAMES,
@@ -121,7 +122,7 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
   },
   landline: () => `${pick(LANDLINE_AREACODES)}-${digits(Math.random() < 0.5 ? 7 : 8)}`,
   email: (ctx) => {
-    const domain = (ctx.rules ?? DEFAULT_GEN_RULES).emailDomain.trim() || pick(EMAIL_DOMAINS);
+    const domain = normalizeEmailDomain((ctx.rules ?? DEFAULT_GEN_RULES).emailDomain) || pick(EMAIL_DOMAINS);
     return `${pick(EMAIL_NAMES)}${digits(3)}@${domain}`;
   },
   idNumber: () => {

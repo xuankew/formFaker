@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FieldDTO, FillResult, ScanResult, Settings } from '../shared/types';
 import { DEFAULT_SETTINGS, RANDOM_OPTION_PLACEHOLDER } from '../shared/types';
 import { loadSettings, saveSettings } from '../shared/storage';
-import { activeTabId, sendToContent } from '../shared/messaging';
+import { activeTabId, reinject, sendToContent, unreachableHint } from '../shared/messaging';
 import SettingsPanel from '../shared/SettingsPanel';
 import './styles.css';
 
@@ -46,10 +46,10 @@ export default function App() {
     }
     let resp = await sendToContent<T>(id, msg);
     if (!resp.ok) {
-      await chrome.runtime.sendMessage({ type: 'ensureInject', tabId: id });
+      const injectError = await reinject(id);
       resp = await sendToContent<T>(id, msg);
+      if (!resp.ok) throw new Error(await unreachableHint(id, injectError ?? resp.error));
     }
-    if (!resp.ok) throw new Error(resp.error);
     return resp.data;
   }, [tabId]);
 

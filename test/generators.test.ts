@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GENERATORS, generate, idCheckDigit, luhnCheckDigit, usccCheckDigit, type GeneratorCtx } from '../src/core/generators';
 import { AREAS } from '../src/core/generators/region-data';
 import { DEFAULT_GEN_RULES, type GenRules } from '../src/shared/types';
+import { normalizeEmailDomain } from '../src/shared/rules';
 
 const ctx = (semantic: GeneratorCtx['semantic'], over: Partial<GeneratorCtx> = {}): GeneratorCtx => ({
   kind: 'text',
@@ -125,6 +126,38 @@ describe('generators with custom rules', () => {
     for (let i = 0; i < 20; i++) {
       expect(GENERATORS.email(ctx('email', { rules: rules({ emailDomain: 'test.com' }) }))).toMatch(/@test\.com$/);
     }
+  });
+
+  it('takes only the domain part when the user pastes a full address', () => {
+    for (let i = 0; i < 20; i++) {
+      const v = GENERATORS.email(ctx('email', { rules: rules({ emailDomain: 'test@mxbc.com' }) }));
+      expect(v).toMatch(/@mxbc\.com$/);
+      expect(v.split('@')).toHaveLength(2);
+    }
+  });
+
+  it('falls back to the built-in pool when the override is not a domain', () => {
+    for (let i = 0; i < 20; i++) {
+      const v = GENERATORS.email(ctx('email', { rules: rules({ emailDomain: '不是域名' }) }));
+      expect(v).toMatch(/^[^@\s]+@[a-z0-9.-]+\.[a-z]{2,}$/);
+    }
+  });
+
+  describe('normalizeEmailDomain', () => {
+    it.each([
+      ['test@mxbc.com', 'mxbc.com'],
+      [' MXBC.COM ', 'mxbc.com'],
+      ['@mxbc.com', 'mxbc.com'],
+      ['mailto:qa@mxbc.com', 'mxbc.com'],
+      ['mxbc.com/', 'mxbc.com'],
+      ['mxbc.com', 'mxbc.com'],
+    ])('normalizes %j to %j', (raw, want) => {
+      expect(normalizeEmailDomain(raw)).toBe(want);
+    });
+
+    it.each(['', '   ', 'mxbc', 'test@mxbc', '不是域名'])('rejects %j', (raw) => {
+      expect(normalizeEmailDomain(raw)).toBe('');
+    });
   });
 
   it('forces the phone segment when overridden', () => {

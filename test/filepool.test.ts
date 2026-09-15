@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { pickPoolFile, poolEntryToFile } from '../src/core/fill/filepool';
+import { describe, expect, it, vi } from 'vitest';
+import { entryMeetsHints, pickPoolFile, poolEntryToFile } from '../src/core/fill/filepool';
 import type { PoolEntry } from '../src/shared/types';
 
 const entry = (name: string, type: string, data = 'AAA='): PoolEntry => ({ name, type, size: data.length, data });
@@ -32,6 +32,48 @@ describe('pickPoolFile', () => {
   });
   it('returns null for an empty pool', () => {
     expect(pickPoolFile([], 'upload-file', '')).toBeNull();
+  });
+});
+
+describe('entryMeetsHints', () => {
+  const big = entry('big.png', 'image/png', 'A'.repeat(600 * 1024));
+  const small = entry('small.png', 'image/png', 'AAAA');
+
+  it('rejects entries over the declared byte limit', async () => {
+    expect(await entryMeetsHints(big, null, 500 * 1024)).toBe(false);
+    expect(await entryMeetsHints(big, null, 1024 * 1024)).toBe(true);
+    expect(await entryMeetsHints(big, null, null)).toBe(true);
+  });
+
+  it('rejects images whose decoded size differs from the declared size', async () => {
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 1000, height: 800, close: () => {} })),
+    );
+    expect(await entryMeetsHints(small, { width: 480, height: 480 }, null)).toBe(false);
+    expect(await entryMeetsHints(small, { width: 1000, height: 800 }, null)).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('treats undecodable or absent decode support as size-unknown', async () => {
+    expect(await entryMeetsHints(small, { width: 480, height: 480 }, null)).toBe(true);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => {
+        throw new Error('decode failed');
+      }),
+    );
+    expect(await entryMeetsHints(small, { width: 480, height: 480 }, null)).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('skips the size check for non-image entries', async () => {
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 1, height: 1, close: () => {} })),
+    );
+    expect(await entryMeetsHints(pdf, { width: 480, height: 480 }, null)).toBe(true);
+    vi.unstubAllGlobals();
   });
 });
 

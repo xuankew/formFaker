@@ -22,6 +22,25 @@ export function requiredImageSize(root: Element): ImageSize | null {
   return { width: Math.min(width, MAX_DIM), height: Math.min(height, MAX_DIM) };
 }
 
+const BYTES_LIMIT_RE =
+  /(?:不超过|不能超过|不大于|不得大于|小于|限(?:制)?(?:为|在)?)\s*(\d+(?:\.\d+)?)\s*(MB|KB|M|K|B)\b|(\d+(?:\.\d+)?)\s*(MB|KB|M|K|B)\s*以[内下]/i;
+const UNIT_BYTES: Record<string, number> = { b: 1, k: 1024, kb: 1024, m: 1024 * 1024, mb: 1024 * 1024 };
+
+// 真实页面常同时声明体积门槛（「建议单张50KB以内」「不超过2MB」）。解析不到返回 null，
+// 表示页面没提体积要求。
+export function requiredMaxBytes(root: Element): number | null {
+  const scope =
+    root.closest('.el-form-item, .ant-form-item, [class*="form-item"], td, .cell') ?? root.parentElement;
+  if (!scope) return null;
+  const text = (scope.textContent ?? '').replace(/\s+/g, ' ');
+  const m = BYTES_LIMIT_RE.exec(text);
+  if (!m) return null;
+  const num = Number(m[1] ?? m[3]);
+  const unit = (m[2] ?? m[4]).toLowerCase();
+  if (!num) return null;
+  return Math.round(num * UNIT_BYTES[unit]);
+}
+
 export async function makeTestFile(
   kind: 'upload-image' | 'upload-file',
   accept: string,

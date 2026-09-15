@@ -1,8 +1,11 @@
-async function ensureInjected(tabId: number): Promise<void> {
+import type { InjectResponse } from '../shared/types';
+
+async function ensureInjected(tabId: number): Promise<InjectResponse> {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-  } catch {
-    // chrome:// pages and web store reject injection; panel will surface the error
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -15,10 +18,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'no tabId' });
       return false;
     }
-    ensureInjected(tabId).then(
-      () => sendResponse({ ok: true }),
-      (err) => sendResponse({ ok: false, error: String(err) }),
-    );
+    ensureInjected(tabId).then(sendResponse);
     return true;
   }
   void sender;

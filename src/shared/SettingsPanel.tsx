@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadSettings, saveSettings } from './storage';
+import { normalizeEmailDomain } from './rules';
 import {
   DEFAULT_GEN_RULES,
   DEFAULT_SETTINGS,
@@ -81,6 +82,16 @@ export default function SettingsPanel() {
     persistPool(next, ignored.length ? `已保存，忽略：${ignored.join('、')}` : '已保存');
   };
 
+  const emailRaw = settings.rules.emailDomain;
+  const emailNorm = normalizeEmailDomain(emailRaw);
+  const emailWarn = !emailRaw.trim()
+    ? ''
+    : emailNorm === ''
+      ? '不是合法域名，将回退内置域名池'
+      : emailNorm !== emailRaw.trim().toLowerCase()
+        ? `域名只需 @ 后面的部分，将按「${emailNorm}」生成`
+        : '';
+
   return (
     <div className="ff-settings">
       <section className="card">
@@ -114,6 +125,7 @@ export default function SettingsPanel() {
               placeholder={f.placeholder}
               onChange={(e) => setRule(f.key, e.target.value)}
             />
+            {f.key === 'emailDomain' && emailWarn && <span className="warn">{emailWarn}</span>}
           </label>
         ))}
         <div className="rowline">
@@ -144,6 +156,7 @@ export default function SettingsPanel() {
         </h3>
         <p className="lead">
           填充「上传」控件时优先按 <code>accept</code> 从文件池匹配真实文件；池为空或无匹配时回退内置合成文件（PNG/PDF）。
+          池文件若不满足字段声明的门槛（如「50KB以内」「尺寸大小为：480*480px」）会自动改用合成文件，避免被页面拒收。
           单个文件 ≤ 2MB，仅保存在本机。
         </p>
         <label className="drop">

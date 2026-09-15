@@ -83,6 +83,10 @@ export type ContentRequest =
 
 export type ContentResponse<T = unknown> = { ok: true; data: T } | { ok: false; error: string };
 
+// popup → background 的按需注入契约；失败原因要带回面板，否则用户只看到 Chrome 的 lastError 原文。
+export type InjectRequest = { type: 'ensureInject'; tabId: number };
+export type InjectResponse = { ok: boolean; error?: string };
+
 export const RANDOM_OPTION_PLACEHOLDER = '(填充时随机选择)';
 
 // User-overridable generation rules. Empty string on pool-based fields means

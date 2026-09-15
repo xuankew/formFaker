@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { requiredImageSize } from '../src/core/fill/files';
+import { requiredImageSize, requiredMaxBytes } from '../src/core/fill/files';
 import { scanDocument } from '../src/core/scan';
 
 const sizeIn = (hint: string, inner = '<div class="el-upload"><input type="file" accept="image/*" /></div>') => {
@@ -28,6 +28,28 @@ describe('requiredImageSize', () => {
 
   it('caps absurd dimensions so the canvas stays allocatable', () => {
     expect(sizeIn('尺寸大小为：9000*9000px')).toEqual({ width: 2000, height: 2000 });
+  });
+});
+
+const bytesIn = (hint: string, inner = '<div class="el-upload"><input type="file" accept="image/*" /></div>') => {
+  document.body.innerHTML = `<div class="el-form-item"><label class="el-form-item__label">商品主图</label>${inner}<div class="tip">${hint}</div></div>`;
+  return requiredMaxBytes(document.querySelector('input') as HTMLElement);
+};
+
+describe('requiredMaxBytes', () => {
+  it('reads suffix-style limits', () => {
+    expect(bytesIn('支持jpg/png/gif，建议单张50KB以内，尺寸大小为：480*480px')).toBe(50 * 1024);
+  });
+
+  it('reads prefix-style limits', () => {
+    expect(bytesIn('支持 pdf 格式，单个不超过 10MB')).toBe(10 * 1024 * 1024);
+    expect(bytesIn('图片小于500KB')).toBe(500 * 1024);
+    expect(bytesIn('大小限制为 1M')).toBe(1024 * 1024);
+  });
+
+  it('returns null when the hint carries no byte limit', () => {
+    expect(bytesIn('尺寸大小为：480*480px')).toBeNull();
+    expect(bytesIn('')).toBeNull();
   });
 });
 

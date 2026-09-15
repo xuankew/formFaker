@@ -4,6 +4,9 @@ node_modules/
 # build output (reproducible via `pnpm build`)
 dist/
 
+# packaged release zips (reproducible via the pack command in README)
+release/
+
 # test coverage
 coverage/
 

@@ -1,10 +1,10 @@
 import { PLACEHOLDER_OPTION_RE, type FieldCandidate } from '../scan';
 import { FILL_SELECTORS } from '../scan/selectors';
-import { RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
+import { RANDOM_OPTION_PLACEHOLDER, type PoolEntry } from '../../shared/types';
 import { blur, ensureInView, isVisibleEl, pressEnter, realClick, restoreSnapshot, setNativeValue, sleep, takeSnapshot, visibleAll, waitUntil, type Snapshot } from './dom';
 import { fillLookup } from './lookup';
-import { makeTestFile, requiredImageSize } from './files';
-import { loadFilePool, pickPoolFile, poolEntryToFile } from './filepool';
+import { makeTestFile, requiredImageSize, requiredMaxBytes } from './files';
+import { entryMeetsHints, loadFilePool, pickPoolFile, poolEntryToFile } from './filepool';
 
 const rand = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
@@ -166,9 +166,15 @@ async function fillUpload(cand: FieldCandidate): Promise<void> {
   const input = cand.targets[0] as HTMLInputElement;
   const kind = cand.kind as 'upload-image' | 'upload-file';
   const accept = cand.accept ?? '';
-  // 文件池里是用户亲手挑的真实文件，格式与尺寸由用户保证，优先于合成图。
-  const entry = pickPoolFile(await loadFilePool(), kind, accept);
-  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept, requiredImageSize(cand.root));
+  const need = kind === 'upload-image' ? requiredImageSize(cand.root) : null;
+  const maxBytes = requiredMaxBytes(cand.root);
+  // 文件池优先，但只挑满足字段声明门槛（体积/尺寸）的条目；都不满足就回退合成文件，
+  // 避免把注定被 before-upload 拒收的池文件注入页面。
+  const pool = await loadFilePool();
+  const eligible: PoolEntry[] = [];
+  for (const e of pool) if (await entryMeetsHints(e, need, maxBytes)) eligible.push(e);
+  const entry = pickPoolFile(eligible, kind, accept);
+  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept, need);
   const beforeMsgs = new Set(refuseMessages());
   const dt = new DataTransfer();
   dt.items.add(file);

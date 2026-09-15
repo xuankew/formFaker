@@ -7,6 +7,7 @@ import { currentOptionText, resolveCredentialLink, resolveGeoLink } from '../cor
 import { coordForText } from '../core/generators/geo';
 import { generate } from '../core/generators';
 import { clearCandidate, fillCandidate, hasExistingValue, restoreSnapshot, takeSnapshot, type Snapshot } from '../core/fill/strategies';
+import { claimBootstrap, type StampHost } from './guard';
 
 interface RuntimeField {
   cand: FieldCandidate;
@@ -227,7 +228,15 @@ function bootstrap(): void {
   });
 }
 
-if (!(globalThis as { __ffLoaded?: boolean }).__ffLoaded) {
-  (globalThis as { __ffLoaded?: boolean }).__ffLoaded = true;
+const host = globalThis as StampHost;
+if (
+  claimBootstrap(host, () => {
+    try {
+      return !!chrome.runtime?.id;
+    } catch {
+      return false;
+    }
+  })
+) {
   bootstrap();
 }

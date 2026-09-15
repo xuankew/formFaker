@@ -82,6 +82,7 @@
 
 .ff-settings .ok { color: #1a7f37; }
 .ff-settings .bad { color: var(--s-danger); }
+.ff-settings .warn { color: #9a5b00; font-size: 12px; }
 
 .ff-settings .drop {
   border: 1px dashed var(--s-line-strong);
