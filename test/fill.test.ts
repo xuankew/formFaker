@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { clearCandidate, fillCandidate, hasExistingValue, restoreSnapshot, takeSnapshot } from '../src/core/fill/strategies';
 import type { FieldCandidate } from '../src/core/scan';
+import { RANDOM_OPTION_PLACEHOLDER } from '../src/shared/types';
 
 const cand = (kind: FieldCandidate['kind'], targets: HTMLElement[], extra: Partial<FieldCandidate> = {}): FieldCandidate => ({
   label: 'x',
@@ -28,6 +29,16 @@ describe('fill native paths', () => {
     document.body.appendChild(select);
     await fillCandidate(cand('select', [select]), '乙');
     expect(select.value).toBe('b');
+  });
+
+  it('never falls back to the placeholder option', async () => {
+    const select = document.createElement('select');
+    select.innerHTML = '<option value="">请选择</option><option value="a">甲</option><option value="b">乙</option>';
+    document.body.appendChild(select);
+    await fillCandidate(cand('select', [select]), RANDOM_OPTION_PLACEHOLDER);
+    expect(select.value).toBe('a');
+    await fillCandidate(cand('select', [select]), '不存在的选项');
+    expect(select.value).toBe('a');
   });
 
   it('toggles checkbox to desired state only', async () => {

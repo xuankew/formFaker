@@ -62,7 +62,7 @@ FormFaker/
 ├─ docs/                     产品/技术设计文档
 ├─ public/manifest.json      MV3 清单
 ├─ scripts/
-│  ├─ build-workers.mjs      esbuild 打包 content/background
+│  ├─ build-workers.mjs      esbuild 打包 content/background/harness（harness 仅 dev 自检用）
 │  └─ build-region.mjs       china-division → region-data.ts
 ├─ popup.html / options.html / demo.html       Vite MPA 入口
 ├─ src/
@@ -76,7 +76,9 @@ FormFaker/
 │  ├─ background/index.ts
 │  ├─ popup/                 App.tsx / components/ / main.tsx / styles.css
 │  ├─ options/               App.tsx / main.tsx
-│  └─ demo/                  main.ts（Vue3 + Element Plus 真实组件演示页）
+│  ├─ demo/                  main.ts（Vue3 + Element Plus 真实组件演示页）
+│  └─ dev/                   harness.ts（window.__ff，含一键 selfCheck）/ audit.ts（独立期望表落地审计）
+│                            → dist/harness.js，manifest 不引用，按需注入
 └─ test/                     vitest 用例 + HTML fixture
 ```
 
@@ -96,13 +98,17 @@ FormFaker/
 跳过：`disabled`（含祖先/`is-disabled` 类）、`readonly`（文本类）、不可见（`getClientRects().length === 0`）。
 **白名单例外**：原生分支里若 `disabled`/`readonly` 控件的 label 命中 `LNGLAT_RE`（经纬度/坐标），不跳过、保留为可填（`targets=[el]`）——地图选点回填的坐标框设计上即禁用，需联动地址写入。
 **白名单例外 2（lookup）**：文本类 `readonly` 且未 `:disabled` 的输入框，若在其 `.el-input/.ant-input-*` 包裹层、所在单元格/表单项、或父元素三个作用域内找到「放大镜/搜索/选择」类触发节点（`findLookupTrigger`：按类名/aria-label/title 命中 `search|lookup|zoom|magnif|picker` 或文本为 选择/查询/搜索/…，再回退到 `.el-input-group__append button`、`.el-input__suffix .el-icon`、`.ant-input-suffix .anticon` 等插槽选择器），则判为 `lookup` 字段并保留 `trigger` 引用——它的值来自弹窗选择（清算会员号/联行号等），不是死字段。可编辑输入框即使带搜索图标仍按 `text` 处理。
+**白名单例外 3（upload）**：`input[type=file]` 天生 `display:none`（用户点自定义按钮才唤起系统选择器），按可见性跳过会漏掉整类原生上传字段，故 `upload-image/upload-file` 不做可见性判断。
 跳过项收集到 `skipped[]` 供面板折叠展示（含原因）。
 
 ### 4.3 控件分类（kind）
 
 widget 根按类名映射 kind（cascader / daterange / datetime / date / multiselect / select-widget / upload-image / upload-file / switch / radio-group / checkbox-group / number）；
 原生按 tagName + type 映射（textarea / select / multiselect / checkbox / radio-group / date / datetime / number / richtext / email / url / password / tel / text）。
+
 upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 类 → image。
+
+**提示文字纠正（`hintSaysImage`）**：真实页的上传控件常常不带 `accept`（限制写在 `before-upload` 里），按 accept 分类会落到 `upload-file` 并注入合成 PDF——页面上表现为「图片格式不正确」，用户只看到缩略图裂开。故两条分支（widget 与原生）在判出 `upload-file` 后，都再检查字段作用域文本是否命中 `IMAGE_HINT_RE`（图片/照片/头像/image/jpe?g/png/gif/webp/bmp/「尺寸大小为 数字」），命中即改判 `upload-image`。反向不改：带 `accept=pdf` 的字段即使提示里有「图片」字样也保持 `upload-file`，因为 accept 是更强的信号。
 `lookup` 不由类名映射得出，而是 4.2 的「只读输入框 + 选择触发节点」组合判定，`FieldCandidate` 上额外带 `trigger` 元素引用。
 
 ### 4.4 label 提取（优先级）
@@ -187,11 +193,31 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 | daterange | 两个内层 input 依次：值 + Enter；第二个 blur |
 | radio-group | 目标 = 文本匹配或随机的 label/wrapper → `realClick` |
 | checkbox / checkbox-group / switch | 期望态与当前态不同才 `realClick`（group 点 1~2 项） |
-| upload-image / upload-file | 生成 File → `DataTransfer` → 赋 `input.files` → dispatch `change`(bubbles) |
+| upload-image / upload-file | 生成 File（图片尺寸按字段提示，见下）→ `DataTransfer` → 赋 `input.files` → dispatch `change`(bubbles) |
 | richtext | `el.innerHTML = '<p>…</p>'` + `InputEvent('input')`（Quill/wangEditor 的 MutationObserver 会自同步） |
-| lookup | 点触发图标开弹窗 → 选第一条记录 → 确定 → 校验回填（`fillLookup`，见下） |
+| lookup | 点触发图标开弹窗 → 选第一条记录 → 提交（行内「选择」链接或页脚确定）→ 校验回填，必要时读回记录文本（`fillLookup`，见下） |
 
-**lookup 填充流程（`core/fill/lookup.ts`）**：先记录页面上已可见的弹窗集合（`.el-dialog/.el-drawer/.ant-modal-content/.ant-drawer-content/[role=dialog]`），`ensureInView` + `realClick(trigger)` 后等新弹窗出现（3s 超时 → 抛「点击后未弹出选择窗口」）。弹窗内取可选行（`.el-table__body tbody tr`、`.ant-table-tbody tr`、`table tbody tr`、`[role=row]`、`.el-dialog__body li`，过滤表头行/空行/不可见行）：**记录通常是弹窗打开后才异步请求回来的，故先等 1.5s 让行到达**，仍为空才点「查询/搜索」按钮（再等 3s），两者都拿不到行 → 抛「弹窗内没有可选记录（可能需要先填查询条件）」。选中第一行时优先点 `.el-radio/.ant-radio-wrapper/.el-checkbox` 包裹层或原生 radio/checkbox，点完检查 `checked`——**框架包裹层可能吞掉这次点击，未勾中就回退点整行**。随后点确认按钮，找不到则改为整行 click + dblclick。**按钮文案匹配去空白后做包含判断**（页脚常渲染成「确 定」，图标按钮还会带多余空格），命中 `确定/确认/保存/选定/选择/提交/ok/confirm`，并**先排除** `取消/关闭/返回/清除/重置/cancel/close/reset`，且**页脚（`.el-dialog__footer` 等）优先于弹窗内其他按钮**，避免误点表格行内的同名按钮。最后校验回填：输入框有值**或弹窗已自行关闭**都算成功（确认后框架可能重渲染，旧 input 引用已脱离文档、永远读不到值），2.5s 内两者都没发生 → 抛「选择后未回填到输入框」。**无论成功失败，`finally` 都关闭弹窗**（点头部关闭按钮，否则派发 Escape），避免遗留遮罩挡住后续字段。
+**占位项不是可选值（`PLACEHOLDER_OPTION_RE`）**：原生 `<select>` 普遍带一个 `<option value="">请选择</option>`。它若进入 `optionTexts`，枚举生成器就会随机选中它，而填充侧找不到匹配文本时又回退 `options[0]`——两者叠加把字段静默留在占位项上：面板报成功、页面值为空、依赖该值的 `v-if` 区块（如「企业生产类型=生产性企业」才出现的产线数量）永不揭示，用户看到的是「一整块没填」。故扫描侧 `optionTextsOfSelect` 排除 `value === ''`、`disabled` 与文案命中占位正则（请选择/请设置/select/`-`/`—`）的 option；填充侧 `select` 与原生 `multiselect` 的匹配与回退都只在过滤后的真实选项里挑（`multiselect` 的取消勾选仍遍历全部 option）。审计侧同样把「停在占位项上」判为 `empty`（见 §12.10）。
+
+**上传图片尺寸与拒收自报（`core/fill/files.ts` / `strategies.ts`）**：真实页面常在上传控件旁写明「支持 jpg/png/gif，建议单张 50KB 以内，**尺寸大小为：480*480px**」，并在 `before-upload` 或服务端回调里校验；固定 240×160 的合成图会被直接拒掉，表现为「字段红字提示不能为空 / 图片格式不正确、文件却没上传」。填充顺序为：**文件池优先**（设置页预置的真实文件，格式与尺寸由用户保证）→ 无匹配时才合成，且合成前用 `requiredImageSize` 在字段作用域（`closest('.el-form-item/.ant-form-item/[class*=form-item]/td/.cell')`，退到父元素）的文本里解析要求尺寸：先匹配 `宽*高 px|像素`（分隔符支持 `* × x X`），再退一步匹配「尺寸…宽*高」这类无单位写法；解析到就按该尺寸画 canvas（单边上限 2000，避免超大画布），解析不到维持默认 240×160。
+
+**拒收自报（`rejectIfPageRefused`）**：页面拒收时我们这边不会抛任何异常，唯一痕迹是列表项失败态或框架弹提示。注入后轮询（200ms 步、2.5s 窗；列表始终没挂载且无提示时 1.2s 短窗退出）：收集 `.el-upload-list/.ant-upload-list` 的项（**EP 的列表 ul 是 `.el-upload` 的兄弟节点且首文件加入后才挂载，故从共同宿主滚动收集**），出现 `is-fail/-error` 项或**新增**的 `.el-message/.ant-message-notice` 等提示（注入前快照做差集，避免误认旧提示）且文案命中 格式/尺寸/大小/失败/不正确/不支持/超过 → 抛「上传被页面拒绝 `items/fail/img=msg=`」现场清单；出现 `is-success` 或全部 `is-ready/-done`（页面把上传推迟到提交时）则视为此刻无可验失败。**空数组的 `every` 恒真**是个坑：被拒后列表项被移除、items 为空，若不加 `items.length` 前置会提前 return 吞掉证据。
+
+**lookup 填充流程（`core/fill/lookup.ts`）**：先记录页面上已可见的弹窗集合（`.el-dialog/.el-drawer/.ant-modal-content/.ant-drawer-content/[role=dialog]`），`ensureInView` + `realClick(trigger)` 后等新弹窗出现（3s 超时 → 抛「点击后未弹出选择窗口」）。弹窗内取可选行（`.el-table__body tbody tr`、`.ant-table-tbody tr`、`table tbody tr`、`[role=row]`、`.el-dialog__body li`，过滤表头行/空行/不可见行）：**记录通常是弹窗打开后才异步请求回来的，故先等 1.5s 让行到达**，仍为空才点「查询/搜索」按钮（再等 3s），两者都拿不到行 → 抛「弹窗内没有可选记录（可能需要先填查询条件）」。
+
+选中第一行时，**只有行内存在 radio/checkbox 才做点选**：优先点 `.el-radio/.ant-radio-wrapper/.el-checkbox` 包裹层或原生 input，点完检查 `checked`——**框架包裹层可能吞掉这次点击，未勾中就回退点整行**。没有选择列的表格（如 SRM「查询税收编码」，提交靠 `操作` 列的「选择」链接）不再多余点行。
+
+提交控件分两处找，合并成**一条有序候选链依次点击（最多 4 次，每次点完等 150ms/450ms 看是否已回填或弹窗已关，命中即止）**，**有选择列时页脚确认排在前，没有选择列时行内链接排在前**：
+
+- **行内**：`操作` 列的「选择」链接。Element Plus 渲染成 `<a class="el-link"><span class="el-link__inner">选择</span></a>`，不是 `<button>`，故行内选择器放宽到 `button/a/.el-button/.el-link/[role=button]/[class*=link]/[class*=btn]/span/label`，并要求**去空白后文本 ≤ 8 字**，避免整格文本被当成控件；选择器全不命中时再退一步找**叶子节点上文本恰为 选择/选定/选中/确定/确认 的任意标签**（自研组件常把操作渲染成无样式 `div`）。**固定列若以克隆表实现（AntD v3 / Element UI 2.x 把 `操作` 列复制进第二张表覆盖在主表上），可点的那份不在我们持有的行里**，故按行序号到弹窗内其它 `<table>` 的同序号行再找一遍（Element Plus 2.x 经浏览器实测是 sticky 单元格而非克隆表，此路只为兼容旧版本）。
+- **弹窗级**：仅 `button/.el-button/.ant-btn/[role=button]`（**页脚 `.el-dialog__footer` 等优先**），并**排除位于数据行内的控件**，否则多行弹窗会提交到错误的记录；选择器保持窄，免得把 `选择供应商` 这类标题 span 当成按钮。
+- **每个候选还会再试一次它的内层叶子节点**：监听绑在 `<a>` 根上还是内层 `<span>` 上因组件库而异，而合成 click 派发给外层节点时**不会向下传到内层监听**。
+
+文案匹配统一**去空白后做包含判断**（页脚常渲染成「确 定」，图标按钮还会带多余空格），命中 `选择/选定/选中/确定/确认/保存/提交/ok/confirm`，并**先排除** `取消/关闭/返回/清除/重置/删除/移除/编辑/修改/新增/添加/cancel/close/reset/delete/remove/edit`——选择器放宽到 `a/span` 后必须挡住行内「编辑/删除」这类会改数据的链接。整条候选链为空 → 整行 click + dblclick 兜底。
+
+最后校验回填：输入框有值**或弹窗已自行关闭**都算已提交（确认后框架可能重渲染，旧 input 引用已脱离文档、永远读不到值）。**仍为空且 input 还在文档中时启用读回兜底**：按列头匹配字段标签取记录文本（标签「税收编码」命中同名列；对不上则取第一个数据格，跳过含 radio/checkbox 的格与「编辑选择」这类操作格），再用 `setNativeValue` 写入——它派发 `input`/`change`，框架模型随之更新；**框架重渲染可能把第一次写入还原，故最多写两次**。记录文本在**点提交之前**就读好，因为提交后行通常会被销毁（Element Plus 的表头与表体还是两张表，列头要从弹窗而非行所在表格里取）。
+
+**弹窗自行关闭不等于成功**：自研弹窗常常关掉却不写模型，读回又被框架还原，字段实际仍为空——这种以前是静默通过，现在只要**字段仍为空且 input 还挂在文档上**就抛「选择后未回填到输入框」。两条失败文案都会附上 `diagnose` 现场清单（`rows/tables/closed/dialog/clicked/input=live|detached/record/actions`）：**真实页的控制台我们够不到，用户能截图的只有面板红字，所以证据必须随错误一起回传**。**无论成功失败，`finally` 都关闭弹窗**（点头部关闭按钮，否则派发 Escape），避免遗留遮罩挡住后续字段。
 
 **lookup 清除**：只读输入框写不进去，只有组件自带的清除图标能重置绑定模型，故 `clearCandidate` 把 `root` 换成 `closest('.el-input, .ant-input-affix-wrapper, .ant-input-group-wrapper')` 后走通用 widget 清除路径（聚焦/悬停揭示 × 再点击）。
 
@@ -205,7 +231,7 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 
 两类字段在初次 scan 时不存在或不可达，单轮 fill 必漏：
 
-**(a) 条件渲染**：向导式表单里，某些区块只在父级下拉/单选被赋值后才渲染（如「企业生产类型=生产性企业」才出现产线数量输入框）。`handleFill` 在主循环后追加补填轮：调用 core 的 `scanRevealed(knownTargets)`——重扫文档并只返回「非 skipped 且 fill targets 不在已跟踪集合内」的新候选；为每个新候选在字段表登记 id/语义/生成值，取快照并填充。每轮前等一帧 `requestAnimationFrame` 让框架完成渲染；最多 2 轮以约束级联揭示。
+**(a) 条件渲染**：向导式表单里，某些区块只在父级下拉/单选被赋值后才渲染（如「企业生产类型=生产性企业」才出现产线数量输入框）。`handleFill` 在主循环后追加补填轮：调用 core 的 `scanRevealed(knownTargets)`——重扫文档并只返回「非 skipped 且 fill targets 不在已跟踪集合内」的新候选；为每个新候选在字段表登记 id/语义/生成值，取快照并填充。每轮前等一帧 `requestAnimationFrame` 让框架完成渲染；最多 2 轮以约束级联揭示。`scanRevealed` 另外排除弹窗/抽屉作用域（`.el-dialog, .el-overlay, .el-drawer, .ant-modal, .ant-drawer`）内的控件：填充途中弹出的选择框是某个字段的临时 UI，由 `fillLookup` 自己负责，增量补扫把弹窗里的单选列/表格控件当新字段吸收会替用户点选记录，弹窗关闭后字段仍旧为空（demo 自检中表现为一条 `(未识别标签)` radio-group「填完仍空」的假违规）。初次 `scanDocument` 不做此排除，整表就在弹窗里的表单仍能正常识别。
 
 **(b) 折叠区/懒挂载（`core/scan/scroll.ts`）**：一屏放不下的长表单里，靠下的字段要么被 `IntersectionObserver`/虚拟滚动延迟挂载，要么根本没进过视口，scan 时 DOM 里没有它们。`walkScroll(onStep, opts)` 边滚边收集：
 
@@ -221,7 +247,7 @@ upload 的 image/file 细分：`accept` 以 `image` 开头或含 upload-picture 
 
 - **background**：轻量 SW，仅响应 popup 的 `ensureInject` → `scripting.executeScript(content.js)`（幂等：content 内 `globalThis.__ffLoaded` 守卫）。popup 由 manifest `action.default_popup` 在点击图标时自动打开，无需 background 参与（也避开在 `action.onClicked` 里 await 后再开 UI 丢失用户手势的坑）。permissions：`scripting, storage, activeTab, unlimitedStorage`（unlimitedStorage 支撑文件池写入 `storage.local`）+ `host_permissions:<all_urls>`（保证任意业务页可注入，不依赖 activeTab 授予时机）。
 - **content**：模块级 `Map<id, FieldRuntime>` 持有元素引用与快照；`scan` 重建，并同时建立两张联动表（`credLinks: numberId→typeId`、`geoLinks: lnglatId→sourceId`）。`scan` 现为**异步**消息（`handleScan` 内含滚动遍历），消息分支写成 `handleScan(msg.rules).then(reply, fail); return true;`——必须 `return true` 才能让 `sendResponse` 通道在异步完成后仍然有效。`regen` 按联动表重新解析：重roll 证照号码时读类型字段当前选中项重定语义；重roll 地址时同步刷新其关联经纬度的坐标；重roll 经纬度时从其源地址重新推导。tab 导航后映射失效，panel `ping` 失败触发重注入 + 重扫。
-- **popup**：React，两个窗内视图——字段列表与内嵌设置页，由「设置 / ← 返回」按钮切换（`view` 状态），设置不再开新标签页。设置 UI 抽成共享组件 `src/shared/SettingsPanel.tsx`，popup 设置视图与独立选项页（`options.html`，现仅作 `chrome://extensions` 的兜底入口）共用。字段列表行内 `content-visibility:auto` 降低长列表渲染成本；UI 状态仅内存，关弹窗即弃（填充/撤销/清除的真状态在 content 侧，关弹窗不丢）。popup 尺寸在 styles.css 固定为 400×600（Chrome 上限 800×600），设置视图内容超出时由 `main` 滚动。
+- **popup**：React，两个窗内视图——字段列表与内嵌设置页，由「设置 / ← 返回」按钮切换（`view` 状态），设置不再开新标签页。设置 UI 抽成共享组件 `src/shared/SettingsPanel.tsx`，popup 设置视图与独立选项页（`options.html`，现仅作 `chrome://extensions` 的兜底入口）共用；其样式在 `src/shared/settings.css` 里随组件引入（卡片/输入框/按钮层级/虚线投放区都带 `.ff-settings` 作用域前缀，避免与宿主样式互染），两个宿主无需各自引样式；选项页外层版式为 `.options-page`，灰底经 `body:has(.options-page)` 生效（Chrome 105+，低于目标版本 116 无碍）。字段列表行内 `content-visibility:auto` 降低长列表渲染成本；UI 状态仅内存，关弹窗即弃（填充/撤销/清除的真状态在 content 侧，关弹窗不丢）。popup 尺寸在 styles.css 固定为 400×600（Chrome 上限 800×600），设置视图内容超出时由 `main` 滚动。UI 状态层级：按钮四档——`primary`（填充全部）、`danger`（清除全部，红色警示）、`ghost`（重新识别/撤销，无边框弱化）、默认；`canUndo` 由 popup 侧维护（fill 成功置真、undo/scan 复位，content 的快照生命周期与之同步），`tone`（''/warn/err）给状态文字着色（填充失败红、清除有无法清空琥珀）；`generic` 语义 chip 灰显以暴露词典未命中；上传类字段值 `readOnly` + `.value.static`；工具条「跳过 N 个」为 linklike 按钮，点击展开并 `scrollIntoView` 到跳过列表。
 - **storage**：`ff.settings = {overwrite:boolean, rules:GenRules}`（sync；`loadSettings` 深合并内置默认）；`ff.filepool = PoolEntry[]`（local；每项 `{name,type,size,data(base64)}`，上限 10 个 / 单个 2MB）。
 
 ## 9. 性能设计汇总
@@ -261,14 +287,20 @@ dist 即加载目录：`manifest.json`、`background.js`、`content.js`、`popup
 - 单测（vitest+jsdom）：
   1. 生成器：phone 号段正则、idNumber/creditCode/bankCard 校验位函数反验、region 路径层级合法、daterange 起<止。
   2. 语义推断：fixture 标签（受理组织/联系电话/注册资本/注册地区…）命中期望语义；优先级用例（手机 vs 电话）。
-  3. 控件分类：fixture HTML（原生 + Element/Ant 类名结构）→ kind 矩阵断言；disabled/hidden 过滤；`scanRevealed` 条件渲染补扫——初扫后新插入的控件恰被返回一次、可填充、更新已知集合后二轮为空。
+  3. 控件分类：fixture HTML（原生 + Element/Ant 类名结构）→ kind 矩阵断言；disabled/hidden 过滤；`scanRevealed` 条件渲染补扫——初扫后新插入的控件恰被返回一次、可填充、更新已知集合后二轮为空，且**弹窗（`.el-overlay/.el-dialog`）里的单选列不被增量补扫吸收**（先断言 `scanDocument` 能扫到它，证明排除来自弹窗作用域而非可见性）。
   4. 原生填充：jsdom 中 setNativeValue 后 input 收到事件且 value 生效；select/checkbox/radio 路径。
   5. 经纬度（`test/geo.test.ts`）：lnglat 语义推断；禁用坐标框被白名单放行而其他禁用字段仍跳过；`coordForText` 确定性 + 落在对应省 bbox 内 + 无已知省时返回 null；`resolveGeoLink` 令 lnglat 值等于 `coordForText(地址值)`，且**表单作用域**配对——多表单页里链到同表单地址而非全局第一个地址类字段。
   6. 表格列头标签（`test/table.test.ts`，6 例）：普通表格单元格取列头；取到后语义正确（姓名→cnName、手机号→phone、电子邮箱→email、银行账号→bankCard）；EP 表头/表体分离在兄弟 `<table>` 时仍能关联；`colspan` 展开列号 + 多级表头自下而上回溯；ARIA 网格经 `aria-colindex` 与 `headers` 属性；优先级——form-item 标签与包裹 `<label>` 胜过列头，非表格字段不受影响，无表格时仍回退 placeholder。
   7. 滚动累积（`test/scroll.test.ts`，5 例）：用 `Object.defineProperty` 伪造 `scrollHeight/clientHeight`——步进到最大值后恢复原 `scrollTop`；连续无新增恰在第 4 步退出；`maxSteps` 生效；懒挂载控件只被收集一次（已知集合需像运行时那样增长）；无可滚动容器时为 no-op（仅 1 步）。
-  8. 弹窗选择（`test/lookup.test.ts`，12 例）：识别——只读框 + suffix 图标 → `lookup` 且带 trigger；包裹层外的兄弟「选择」按钮 → `lookup`；只读/禁用但无触发器 → skipped「禁用/只读」；可编辑框带搜索图标仍是 `text`。生成——`generate({kind:'lookup'})` 返回占位标记。填充——开弹窗选第一条 + 确定后输入框写入且弹窗隐藏；列表为空时先点「查询」再选中；**记录在弹窗打开 200ms 后才到达（无查询按钮）仍能选中**；**页脚文案为「确 定」时仍被认成确认按钮**；**radio 包裹层吞掉点击（原生 input 未勾中）时回退点整行**；无弹窗时 3s 内抛「点击后未弹出选择窗口」；无可选记录时抛错**且关闭按钮被点过一次**（不留遮罩挡后续字段）。用例需把 `getBoundingClientRect` 打桩为非零矩形——jsdom 恒返回 0×0，填充引擎会据此判为不可见；断言回退点行时只统计 `target` 为行本身的点击，因为包裹层的 click 会冒泡到行。
-- 手工：demo 页（原生区 + Element Plus 真实组件区，含 cascader/date/upload/switch、「注册地址 + 禁用经纬度」联动样例、「企业生产类型→v-if 揭示产线数量」条件渲染样例，以及本轮新增的**联系人表格区**（姓名/角色/区号/手机号/电子邮箱 + 添加一行）、**清算会员号弹窗选择样例**（只读框 + 🔍 → el-dialog 内 el-table 单选 + 确定）、**1100px 占位 + IntersectionObserver 懒挂载区**（供应商产能/产线/合作客户/意向物料））加载扩展全流程；联动、条件渲染、表格列头、弹窗选择、滚动懒挂载均已用 dev harness（`window.__ff`）在真实浏览器端到端验证：扫描 44 项、表格内 姓名/手机号/电子邮箱 写入 Vue `model.contacts`、区号按 integer 生成、清算会员号选得 `QX0001` 且遮罩关闭、懒挂载四字段全部填入 `model.lazy`、滚动位置复位 `scrollY: 0`、无字段报错；SRM 风格长表单截图页人工核对覆盖率。
+  8. 弹窗选择（`test/lookup.test.ts`，22 例）：识别——只读框 + suffix 图标 → `lookup` 且带 trigger；包裹层外的兄弟「选择」按钮 → `lookup`；只读/禁用但无触发器 → skipped「禁用/只读」；可编辑框带搜索图标仍是 `text`。生成——`generate({kind:'lookup'})` 返回占位标记。填充——开弹窗选第一条 + 确定后输入框写入且弹窗隐藏；列表为空时先点「查询」再选中；**记录在弹窗打开 200ms 后才到达（无查询按钮）仍能选中**；**页脚文案为「确 定」时仍被认成确认按钮**；**radio 包裹层吞掉点击（原生 input 未勾中）时回退点整行**；无弹窗时 3s 内抛「点击后未弹出选择窗口」；无可选记录时抛错**且关闭按钮被点过一次**（不留遮罩挡后续字段）。**行内提交形态**（复刻 SRM「查询税收编码」：无页脚、无单选列，`操作` 列是 `<a class="el-link">` 或裸 `<span>` 的「编辑/选择」）——点中第一行的「选择」，**不点「编辑」、不点第二行**；**弹窗自行关闭却没回填时按列头读回记录文本**（标签「货物和劳务名称」取到第二列而非第一列），**列头与标签对不上时退回第一个数据格**。**真实页加固**——固定右列克隆表：主表行内的同名链接点了没反应（无监听），仍能到兄弟表同序号行点中真正的「选择」（克隆行只有操作格，记录按行序号还原，借此证明点的是第一行而非第二行）；操作渲染成**选择器全不覆盖的叶子 `div`** 时按精确文案命中；**监听绑在 `el-link` 内层 `span`** 时外层点空后回退点内层；**框架还原第一次读回**时第二次写入生效（断言写入 2 次、还原 1 次）；**弹窗自关但值始终不落地**时不再静默通过而抛错；无可点控件且写入被还原时抛错，并**在文案里带出现场清单**（`rows=2 tables=2`、`input=live:""`、`actions=span.muted:查看`）。用例需把 `getBoundingClientRect` 打桩为非零矩形——jsdom 恒返回 0×0，填充引擎会据此判为不可见；断言回退点行时只统计 `target` 为行本身的点击，因为包裹层的 click 会冒泡到行。
+  9. 上传（`test/files.test.ts`，8 例）：`requiredImageSize` 解析——「…50KB以内，尺寸大小为：480*480px」取到 480×480；`×`/`x` 分隔符与空格、大写 PX 均可；无单位的「尺寸要求 1200*900」靠「尺寸」前缀命中；只写体积不写尺寸的提示返回 `null`（沿用默认）；单边超 2000 时收敛到 2000（画布可分配）。扫描——`display:none` 的原生 `input[type=file]` 仍判为 `upload-image` 且 `targets=[input]`，不再被当「不可见」跳过；**无 `accept` 的图片提示**（form-item 内「商品轮播图…支持图片格式jpg/png…尺寸大小为：750*564px」）经 `hintSaysImage` 改判 `upload-image`；**提示写的是 pdf** 时仍保持 `upload-file`，证明纠正不会把真附件字段带偏。canvas 依赖浏览器，jsdom 无法验 `makePng`，实际像素由 e2e 断言。
+  10. 落地审计（`test/audit.test.ts`，18 例；被测对象 `src/dev/audit.ts`）：审计不复用 `SEMANTIC_RULES`，而是**另写一张人工期望表**（标签正则 → 期望语义 → 值形态正则，如 手机号 `/^1[3-9]\d{9}$/`、统一社会信用代码 18 位、开户行名须含「银行/支行/信用社」、人名 2~4 个汉字），因为同源校验只会复刻实现自己的错序。`liveValue` 从 DOM 读回落地值，读取顺序为：上传 → `uploadLive`；布尔类 → `true/false` 与 `checked/''`（未选中是合法结果，故走 `state-mismatch` 而非 `empty`）；原生候选 `root === input`，**必须先直接读 `primary.value`**（`root.querySelector('input')` 对原生控件永远落空）；再退 widget 显示层。违规规则：`fill-error / empty / state-mismatch / placeholder-leak / image-field-non-image / image-label-as-file / upload-size-mismatch / semantic-miss / value-shape`（daterange 按 `~` 拆两段各验一次；选项类与上传类不做值形态校验）。两个 Element Plus 坑写进了用例：**`is-hidden` 的 `.el-select__input-wrapper` 同样带 `.el-select__selected-item` 类且文档序在真显示项之前**，逗号选择器 `querySelector` 会取到空节点（首轮 e2e 因此把已填好的下拉误报 `empty`），故按单选择器逐个收集并跳过 `is-transparent`/`is-hidden`；**自动上传成功后 EP 会清空 `input.files`**，上传证据须回退到 `.el-upload-list__item` 的项数与文件名/src。原生 select 停在占位项上时判 `empty`（`selectedOptions[0].text` 非空会骗过朴素读法，见 §7.2）。
+- 手工：demo 页（原生区 + Element Plus 真实组件区，含 cascader/date/upload/switch、「注册地址 + 禁用经纬度」联动样例、「企业生产类型→v-if 揭示产线数量」条件渲染样例，以及**联系人表格区**（姓名/角色/区号/手机号/电子邮箱 + 添加一行）、**两个弹窗选择样例**——「清算会员号」（el-dialog 内 el-table 单选列 + 页脚确定）与「税收编码」（复刻 SRM「查询税收编码」：关键词框 + 搜索/重置/新增、无页脚、无单选列，`操作` 列为 `<el-link>` 的 编辑/选择且 `fixed="right"`）、**1100px 占位 + IntersectionObserver 懒挂载区**（供应商产能/产线/合作客户/意向物料））加载扩展全流程；联动、条件渲染、表格列头、两种弹窗选择、滚动懒挂载均已用 dev harness（`window.__ff`）在真实浏览器端到端验证：扫描覆盖全部区块字段、表格内 姓名/手机号/电子邮箱 写入 Vue `model.contacts`、区号按 integer 生成、**行内「选择」链接提交成功（`model.taxCode = 1010101`）且 radio+页脚形态未回退（`model.clearingNo = QX0001`）、两次填充后遗留遮罩均为 0**、懒挂载四字段全部填入 `model.lazy`、滚动位置复位 `scrollY: 0`、无字段报错；SRM 风格长表单截图页人工核对覆盖率。
   - 懒挂载样例的教训：占位锚点若高度为 0 且正好落在视口底边，`IntersectionObserver` 永不触发——锚点需给 1px 高度并配 `rootMargin`。这是 fixture 写法问题，非 `walkScroll` 缺陷（遍历确实滚到底并复位了）。
+  - 弹窗选择的浏览器取证（Element Plus 2.x）：`fixed="right"` 渲染成 **sticky 单元格**（`.el-table-fixed-column--right`），弹窗内只有 2 张表（表头 + 表体）、**没有 `.el-table__fixed-right` 克隆容器**，「选择」的真实 DOM 是 `<a class="el-link el-link--primary"><span class="el-link__inner">选择</span></a>`（监听在 `<a>` 根上）。故克隆表分支只对 AntD v3 / Element UI 2.x 这类老实现有意义，EP 页面上的失败原因不在固定列。第三轮加固后两个样例复测仍成功（税收编码 580ms → `model.taxCode = 1010101`、清算会员号 1096ms → `QX0001`，遗留遮罩 0），候选链变长没有带来误报。
+  - 上传样例 e2e（四轮）：demo 增补 EP `picture-card` 上传（商品图片 1 个 + 商品详情图片 3 个并排）、**商品主图**（提示「…尺寸大小为：480*480px」+ `before-upload` 按 `naturalWidth/Height === 480` 严格校验 + 假 `:http-request`；注意 `auto-upload=false` 时 EP 不跑 `before-upload`，门槛样例必须用默认自动上传）与**供应商资质图**（负样例：只收 jpeg，拒收时弹 `ElMessage('图片格式不正确，仅支持jpg/jpeg')`，复刻真实页的拒收提示）。第一轮：8 个上传字段全填、0 报错，主图预览 480×480 门槛通过。第二轮暴露拒收静默：资质图 `qualImgs=0` 却无报错；修好「空列表 every 恒真」与「列表 ul 首文件后才挂载」后，第三轮资质图如实抛「上传被页面拒绝 items=0/fail=0 img=none msg=图片格式不正确，仅支持jpg/jpeg」，其余字段仍全过。**文件池优先复验**：页面里伪造 `chrome.storage.local` 预置一张 480×480 的真实 jpeg 后，资质图与主图都改用池文件并通过门槛（`qualImgs=1`）——证明池优先于合成图生效。第四轮针对「真实页把图片字段当文件传」：新增**商品轮播图**（默认 list-type + `el-button` 触发 + **无 `accept`** + 提示「支持图片格式jpg/png/gif…尺寸大小为：750*564px」，故意不用 picture-card，否则类名分支会先命中而绕过提示纠正），扫描结果 `商品轮播图:upload-image`、`bannerImgs=1`，同页 `上传附件:upload-file` 未被误改。
+  - 一键自检（`window.__ff.selfCheck()`）：把「扫描 → 生成 → 填充 → 审计」串成一次调用，返回可直接粘贴出来的 JSON（`scanned/fillable/skipped[]/filled[]/checked/violations[]`）。流程与生产 `handleFill` 对齐：`scanDocument` + `walkScroll(scanRevealed)` 累积候选 → 逐个 `inferSemantic` + `generate` + `fillCandidate` → 两轮 `scanRevealed` 补填 + 一次 `walkScroll` 补填（否则联动区块漏审，实测漏了「企业生产类型=生产性企业」揭示的产线数量）→ `auditEntries` 用独立期望表审计落地值。dev-only：`harness.js` 由 `scripts/build-workers.mjs` 打包，不在 manifest 里声明，任意页面注入 `<script src="/harness.js">` 即可用（真实页自检同理）。demo 页当前基线 `scanned 60 / fillable 58 / checked 58`，两次连续运行结果一致，常驻 2 条违规：`供应商资质图|upload-image|fill-error`（**设计好的负样例**，只收 jpeg，证明拒收自报有效）与 `供应商产线|text|semantic-miss`（期望表按「产线」判 integer，实现给 generic → 填了 `autotest-xxxxx` 这种字符串；**真实控件形态未知，未擅自改 `SEMANTIC_RULES`**，待确认真实页该字段是数字还是文字描述）。另有一条曾复现的假违规 `(未识别标签)|radio-group|empty`：清算会员号弹窗的单选列被补填轮吸收、弹窗关闭后读回未选中，已由 §7.4 的弹窗作用域排除修掉。
+  - Popup 视觉验证方式：`ego-browser` 的 `Page.captureScreenshot` 在本会话对所有页面（含空白对照页）都超时，截屏能力整体不可用；改用 `dist/ui-preview.html`（把 `dist/popup.html` 加一段内联 `window.chrome` 桩，返回固定的 8 字段扫描结果与一条 f3 填充错误）+ `page.evaluate` 读 computed style / class 断言（卡片圆角 10px 与阴影、按 kind 分类的 chip 配色、`.brand`、`.primary`、底部「⚙ 设置」、红字错误框），验完即删。视觉最终仍需用户在 `chrome://extensions` 重新加载 `dist/` 后亲眼确认。第二轮（按钮层级/状态着色）断言：`清除全部` 计算色 `rgb(207,34,46)` + 浅红边框、`重新识别` ghost 边框与背景透明、`撤销` 初始 `disabled=true` 且填充成功后转 `false`、`generic` chip 灰（`rgb(139,148,158)`）而具体语义蓝（`rgb(47,111,235)`）、上传值 `readOnly=true`、填充失败后 `.status.err` 为红、清除带无法清空时 `.status.warn` 为琥珀、点「跳过 3 个」后 `details[open]` 出现。第三轮（设置页）断言：Popup 内嵌视图与 `options.html` 两个宿主都渲染出 3 张 `.ff-settings .card`（白底、圆角 10px、浅边框），「保存」计算色 `rgb(47,111,235)`、「恢复默认规则」边框与背景透明、虚线投放区 `border-style: dashed` 且内层 file input `display:none`、规则输入框灰底 `rgb(244,246,248)` 圆角 7px、池内「删除」红字 `rgb(207,34,46)`、点保存后出现绿色「已保存」；选项页 `body` 经 `:has(.options-page)` 变灰底 `rgb(245,246,248)`。
 - 缺口明示：Ant Design 路径与真实浏览器事件序列无自动化覆盖，依赖 demo 人工 + 选择器集中配置降低维护成本。
 
 ## 13. 风险与对策
@@ -280,10 +312,13 @@ dist 即加载目录：`manifest.json`、`background.js`、`content.js`、`popup
 | SPA 路由切换后字段失效 | ping 失败→重注入+重扫；面板提示「页面已变化，请重新识别」 |
 | iframe 表单 | MVP 不覆盖，V1.1 all_frames |
 | 上传组件自定义 http 上传按钮（无 input[file]） | 识别为 skipped 并提示原因 |
+| 上传字段带 `before-upload`/服务端格式与尺寸门槛，合成图被拒（表现为字段红字「不能为空 / 图片格式不正确」而文件没上传） | **分类先纠正**：真实页常无 `accept`，按 accept 分会把图片字段判成 `upload-file` 并注入 PDF（「图片格式不正确」的直接根因），故命中字段提示里的图片线索即改判 `upload-image`。**文件池优先**（设置页预置用户自己的真实图片，格式尺寸由用户保证）；无匹配才合成，且按字段提示文字解析要求尺寸画 PNG（单边上限 2000）；注入后观察列表失败态与框架提示，拒收则把页面原话写进面板红字（`上传被页面拒绝 … msg=`）。**真实 SRM 商品页尚未复测**：若门槛写死在代码里而提示文字没写尺寸，合成兜底仍会被拒，此时靠预置文件池或红字里的 msg 再定策 |
 | 经纬度坐标精度（当前为省级行政中心，非市/区级） | `geo.ts` 为单文件替换点：把真实城市质心表填入 `CITY_CENTERS` 即升级精度，无需改其他代码；坐标全程离线推导，无网络/隐私风险 |
 | 虚拟滚动表格（`el-table-v2`、AntD `virtual`）只渲染视口内行 | 列头关联对已渲染行有效；未渲染行需边滚边扫表格内部容器，列入 V1.1（`walkScroll` 已把 `.el-table__body-wrapper` 纳入滚动容器，可作基础） |
 | 动态增减行表格（「+ 添加一行」）只填当前已渲染行 | MVP 明确不自动点新增按钮；行数不足时用户先手动加行再识别，自动加行列入 V1.1 |
 | 弹窗选择型字段可能强制要求先输入查询条件才有记录 | `fillLookup` 先等记录异步到达，再尝试点「查询/搜索」；仍无记录则抛「弹窗内没有可选记录（可能需要先填查询条件）」并关闭弹窗，错误回传面板标红，不留遮罩阻塞后续字段 |
+| 弹窗的提交控件可能是行内链接（`操作` 列「选择」）而非页脚按钮，甚至点了也不回填 | 行内选择器放宽到 `a/.el-link/span` 再退到叶子节点精确文案，与页脚按钮合成**有序候选链依次点击**（无选择列时行内优先，有选择列时页脚优先；每个候选再试内层叶子；固定列克隆表按行序号到兄弟表补找），排除词挡住「编辑/删除/新增」；仍为空则按列头读回记录文本用 `setNativeValue` 写入，**被框架还原就再写一次**；**弹窗自关但字段仍空时不再静默通过，一律抛错**。残留风险：需要「先勾选多行再提交」或提交后由后端异步回填的弹窗，读回文本可能与业务真实主键不一致，此时面板显示成功但值需人工复核 |
+| 真实 SRM 弹窗已连续 3 轮失败，而 jsdom 单测与 demo 页真实浏览器 e2e 全绿（自建 fixture 继承了实现的假设） | 不再凭猜测加第 4 种结构分支：两条失败文案都内嵌 `diagnose` 现场清单（行数/表数/弹窗类名/点过的控件/input 是否脱离文档/读到的记录/行内候选），**用户截图面板红字即可回传证据**；清单到手前只做已被证据支持的改动 |
 
 ## 14. 里程碑
 

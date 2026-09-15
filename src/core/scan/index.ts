@@ -1,7 +1,7 @@
 import type { Kind } from '../../shared/types';
 import { WIDGET_SELECTOR, classifyWidget, findLookupTrigger } from './selectors';
 import { buildLabelIndex, cleanLabel, labelTextFor } from './label';
-import { classifyNative, isDisabled, isVisible } from './classify';
+import { classifyNative, isDisabled, isVisible, hintSaysImage } from './classify';
 import { LNGLAT_RE } from '../semantics/rules';
 
 export interface FieldCandidate {
@@ -17,8 +17,12 @@ export interface FieldCandidate {
   reason?: string;
 }
 
+// 占位项不是可选值：生成器随机选中它会让字段实际留空（联动区块也因此不揭示）。
+export const PLACEHOLDER_OPTION_RE = /^(请选择|请设置|请挑选|请选择.*|select|-{1,2}|—+)$/i;
+
 function optionTextsOfSelect(select: HTMLSelectElement): string[] {
   return Array.from(select.options)
+    .filter((o) => o.value !== '' && !o.disabled && !PLACEHOLDER_OPTION_RE.test(o.text.trim()))
     .map((o) => o.text.trim())
     .filter(Boolean);
 }
@@ -49,7 +53,8 @@ export function scanDocument(doc: Document): FieldCandidate[] {
 
   for (const root of widgetRoots) {
     if (consumed.has(root)) continue;
-    const kind = classifyWidget(root);
+    let kind = classifyWidget(root);
+    if (kind === 'upload-file' && hintSaysImage(root)) kind = 'upload-image';
     if (!kind) continue;
 
     const base = { root, kind };
@@ -118,8 +123,9 @@ export function scanDocument(doc: Document): FieldCandidate[] {
 
   for (const el of natives) {
     if (consumed.has(el) || el.closest(WIDGET_SELECTOR)) continue;
-    const kind = classifyNative(el);
+    let kind = classifyNative(el);
     if (!kind) continue;
+    if (kind === 'upload-file' && hintSaysImage(el)) kind = 'upload-image';
 
     if (kind === 'radio-group' || kind === 'checkbox') {
       const input = el as HTMLInputElement;
@@ -132,7 +138,8 @@ export function scanDocument(doc: Document): FieldCandidate[] {
       continue;
     }
 
-    if (!isVisible(el)) {
+    // file input 天生 display:none（点自定义按钮才唤起系统选择器），按可见性跳过会漏掉整类上传字段。
+    if (kind !== 'upload-image' && kind !== 'upload-file' && !isVisible(el)) {
       push({ label: labelFor(el), kind, root: el, targets: [], skipped: true, reason: '不可见' });
       continue;
     }
@@ -205,12 +212,20 @@ export function scanDocument(doc: Document): FieldCandidate[] {
   return out;
 }
 
+// 弹窗/抽屉里的控件属于某个字段的临时选择 UI（lookup 弹窗由 fillLookup 自己负责）。
+// 增量补扫若把它们当新字段吸收，会替用户点选记录，弹窗关闭后字段仍然为空。
+const DIALOG_SCOPE = '.el-dialog, .el-overlay, .el-drawer, .ant-modal, .ant-drawer';
+
 // Controls that only render after an earlier scan (e.g. revealed once a parent
 // select/radio is filled) are absent from the scan-time field map. Re-scan and return
 // just the new, fillable candidates so a fill pass can top them up.
 export function scanRevealed(knownTargets: Iterable<Element>): FieldCandidate[] {
   const known = new Set(knownTargets);
   return scanDocument(document).filter(
-    (c) => !c.skipped && c.targets.length > 0 && !c.targets.some((t) => known.has(t)),
+    (c) =>
+      !c.skipped &&
+      c.targets.length > 0 &&
+      !c.targets.some((t) => known.has(t)) &&
+      !c.root.closest(DIALOG_SCOPE),
   );
 }

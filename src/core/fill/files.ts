@@ -1,18 +1,47 @@
-export async function makeTestFile(kind: 'upload-image' | 'upload-file', accept: string): Promise<File> {
+export interface ImageSize {
+  width: number;
+  height: number;
+}
+
+const SIZE_RE = /(\d{2,5})\s*[*×xX]\s*(\d{2,5})\s*(?:px|像素)/i;
+const SIZE_AFTER_HINT_RE = /尺寸[^0-9]{0,16}(\d{2,5})\s*[*×xX]\s*(\d{2,5})/;
+const MAX_DIM = 2000;
+
+// 真实页面常在上传控件旁写明「尺寸大小为：480*480px」，并在 before-upload 里按此校验。
+// 解析不到就返回 null，沿用默认尺寸。
+export function requiredImageSize(root: Element): ImageSize | null {
+  const scope =
+    root.closest('.el-form-item, .ant-form-item, [class*="form-item"], td, .cell') ?? root.parentElement;
+  if (!scope) return null;
+  const text = (scope.textContent ?? '').replace(/\s+/g, ' ');
+  const m = SIZE_RE.exec(text) ?? SIZE_AFTER_HINT_RE.exec(text);
+  if (!m) return null;
+  const width = Number(m[1]);
+  const height = Number(m[2]);
+  if (!width || !height) return null;
+  return { width: Math.min(width, MAX_DIM), height: Math.min(height, MAX_DIM) };
+}
+
+export async function makeTestFile(
+  kind: 'upload-image' | 'upload-file',
+  accept: string,
+  size?: ImageSize | null,
+): Promise<File> {
   const stamp = Math.floor(Math.random() * 10000);
   if (kind === 'upload-image' || accept.includes('image')) {
-    const blob = await makePng();
-    return new File([blob], `test-${stamp}.png`, { type: 'image/png' });
+    const blob = await makePng(size);
+    const suffix = size ? `-${size.width}x${size.height}` : '';
+    return new File([blob], `test-${stamp}${suffix}.png`, { type: 'image/png' });
   }
   const bytes = makePdf();
   return new File([bytes], `test-${stamp}.pdf`, { type: 'application/pdf' });
 }
 
-function makePng(): Promise<Blob> {
+function makePng(size?: ImageSize | null): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const canvas = document.createElement('canvas');
-    canvas.width = 240;
-    canvas.height = 160;
+    canvas.width = size?.width ?? 240;
+    canvas.height = size?.height ?? 160;
     const ctx = canvas.getContext('2d');
     if (!ctx) return reject(new Error('canvas unsupported'));
     ctx.fillStyle = `hsl(${Math.floor(Math.random() * 360)}, 60%, 70%)`;

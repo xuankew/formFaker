@@ -1,9 +1,9 @@
-import type { FieldCandidate } from '../scan';
+import { PLACEHOLDER_OPTION_RE, type FieldCandidate } from '../scan';
 import { FILL_SELECTORS } from '../scan/selectors';
 import { RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
 import { blur, ensureInView, isVisibleEl, pressEnter, realClick, restoreSnapshot, setNativeValue, sleep, takeSnapshot, visibleAll, waitUntil, type Snapshot } from './dom';
 import { fillLookup } from './lookup';
-import { makeTestFile } from './files';
+import { makeTestFile, requiredImageSize } from './files';
 import { loadFilePool, pickPoolFile, poolEntryToFile } from './filepool';
 
 const rand = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -108,16 +108,73 @@ async function fillCascader(cand: FieldCandidate, value: string): Promise<void> 
   }
 }
 
+const REFUSE_RE = /格式|尺寸|大小|失败|不正确|不支持|超过|仅支持/;
+const MESSAGE_SELECTOR = '.el-message, .el-message-box, .el-notification, .ant-message-notice, .ant-notification';
+
+function refuseMessages(): string[] {
+  return Array.from(document.querySelectorAll(MESSAGE_SELECTOR))
+    .map((m) => (m.textContent ?? '').trim())
+    .filter((t) => REFUSE_RE.test(t));
+}
+
+// 页面在 before-upload 或服务端回调里拒收时，我们这边不会有任何异常：唯一可见的痕迹是
+// 列表项变成失败态、或框架弹出「图片格式不正确」。把这些痕迹收进报错文案，用户截图面板
+// 红字即可回传证据（与 lookup 的 diagnose 同一思路）。
+async function rejectIfPageRefused(root: Element, beforeMsgs: Set<string>): Promise<void> {
+  // EP 的 .el-upload-list 是 .el-upload 的兄弟节点而非后代，故从共同宿主（表单项/单元格，
+  // 或上传根的父级）收集列表；同一表单项内并排多个上传时一并观察。
+  const host = root.closest('.el-form-item, .ant-form-item, td, .cell, .el-upload, .ant-upload') ?? root;
+  const LIST_SEL = '.el-upload-list, .ant-upload-list';
+  const collectLists = () => {
+    const own = Array.from(host.querySelectorAll(LIST_SEL));
+    return own.length
+      ? own
+      : Array.from((host.parentElement ?? host).children).filter((c) => c.matches(LIST_SEL));
+  };
+  // EP 的列表 ul 在首个文件加入后才挂载，故滚动收集；始终没列表（原生 input / 被拒后移除）
+  // 且没有提示时，用短窗退出，不为无从观察的控件白等。
+  let lists: Element[] = collectLists();
+  const deadline = Date.now() + 2500;
+  const softDeadline = Date.now() + 1200;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    if (!lists.length) lists = collectLists();
+    const msgs = refuseMessages().filter((t) => !beforeMsgs.has(t));
+    const items = lists.flatMap((l) => Array.from(l.querySelectorAll('.el-upload-list__item, .ant-upload-list-item')));
+    const failed = items.filter((i) => /is-fail|is-error|-error/.test(i.className));
+    if (failed.length || msgs.length) {
+      const img = lists.map((l) => l.querySelector('img')).find(Boolean);
+      const src = img?.getAttribute('src') ?? '';
+      const inventory = [
+        `items=${items.length}/fail=${failed.length}`,
+        img ? `img=${src.slice(0, 4) || 'none'}:${img.complete ? `${img.naturalWidth}x${img.naturalHeight}` : 'loading'}` : 'img=none',
+        msgs.length ? `msg=${msgs[0]}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .slice(0, 240);
+      throw new Error(`上传被页面拒绝 ${inventory}`);
+    }
+    // 上传成功、或页面把上传推迟到提交时（ready/done 态），此刻没有可验的失败痕迹。
+    // items 为空不能走这条：被拒收时列表项会被移除，空数组的 every 恒真会吞掉证据。
+    if (items.length && (items.some((i) => /is-success/.test(i.className)) || items.every((i) => /is-ready|-done/.test(i.className)))) return;
+    if (!lists.length && Date.now() > softDeadline) return;
+  }
+}
+
 async function fillUpload(cand: FieldCandidate): Promise<void> {
   const input = cand.targets[0] as HTMLInputElement;
   const kind = cand.kind as 'upload-image' | 'upload-file';
   const accept = cand.accept ?? '';
+  // 文件池里是用户亲手挑的真实文件，格式与尺寸由用户保证，优先于合成图。
   const entry = pickPoolFile(await loadFilePool(), kind, accept);
-  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept);
+  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept, requiredImageSize(cand.root));
+  const beforeMsgs = new Set(refuseMessages());
   const dt = new DataTransfer();
   dt.items.add(file);
   input.files = dt.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
+  await rejectIfPageRefused(cand.root, beforeMsgs);
 }
 
 export async function fillCandidate(cand: FieldCandidate, value: string): Promise<void> {
@@ -138,8 +195,9 @@ export async function fillCandidate(cand: FieldCandidate, value: string): Promis
       return;
     case 'select': {
       const select = primary as HTMLSelectElement;
-      const option =
-        Array.from(select.options).find((o) => o.text.trim() === value || o.value === value) ?? select.options[0];
+      // 回退不能落到 options[0]：那通常是「请选择」占位项，等于没填。
+      const real = Array.from(select.options).filter((o) => o.value !== '' && !PLACEHOLDER_OPTION_RE.test(o.text.trim()));
+      const option = real.find((o) => o.text.trim() === value || o.value === value) ?? real[0];
       if (option) {
         select.value = option.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));
@@ -154,11 +212,11 @@ export async function fillCandidate(cand: FieldCandidate, value: string): Promis
       }
       const select = primary;
       const wanted = value !== RANDOM_OPTION_PLACEHOLDER ? value.split('、') : [];
-      const pool = Array.from(select.options);
+      const pool = Array.from(select.options).filter((o) => o.value !== '' && !PLACEHOLDER_OPTION_RE.test(o.text.trim()));
       const chosen = wanted.length
         ? pool.filter((o) => wanted.includes(o.text.trim()))
         : [...pool].sort(() => Math.random() - 0.5).slice(0, 2);
-      for (const o of pool) o.selected = chosen.includes(o);
+      for (const o of Array.from(select.options)) o.selected = chosen.includes(o);
       select.dispatchEvent(new Event('input', { bubbles: true }));
       select.dispatchEvent(new Event('change', { bubbles: true }));
       return;

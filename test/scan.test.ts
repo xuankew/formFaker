@@ -77,13 +77,25 @@ describe('scanDocument', () => {
     expect(byLabel.get('启用')?.kind).toBe('switch');
     expect(byLabel.get('企业性质')?.kind).toBe('select-widget');
     expect(byLabel.get('纳税类别')?.kind).toBe('select');
-    expect(byLabel.get('纳税类别')?.optionTexts).toEqual(['请选择', '一般纳税人', '小规模']);
+    expect(byLabel.get('纳税类别')?.optionTexts).toEqual(['一般纳税人', '小规模']);
     expect(byLabel.get('备注')?.kind).toBe('textarea');
     expect(byLabel.get('性别')?.kind).toBe('radio-group');
     expect(byLabel.get('性别')?.optionTexts).toEqual(['男', '女']);
     expect(byLabel.get('同意协议')?.kind).toBe('checkbox');
     expect(byLabel.get('营业执照')?.kind).toBe('upload-image');
     expect(byLabel.get('企业简介')?.kind).toBe('richtext');
+  });
+
+  it('keeps placeholder options out of the value pool', () => {
+    document.body.innerHTML = `
+      <label for="s1">纳税类别</label>
+      <select id="s1"><option value="">请选择</option><option>一般纳税人</option><option>小规模</option></select>
+      <label for="s2">企业性质</label>
+      <select id="s2"><option value="-1">请选择</option><option value="soe">国有企业</option><option value="private" disabled>民营企业</option></select>
+    `;
+    const byLabel = new Map(scanDocument(document).map((c) => [c.label, c]));
+    expect(byLabel.get('纳税类别')?.optionTexts).toEqual(['一般纳税人', '小规模']);
+    expect(byLabel.get('企业性质')?.optionTexts).toEqual(['国有企业']);
   });
 
   it('skips disabled and hidden controls with reasons', () => {
@@ -129,5 +141,22 @@ describe('scanRevealed (conditionally rendered controls)', () => {
     const knownAfter: Element[] = [...known];
     for (const c of revealed) knownAfter.push(...c.targets);
     expect(scanRevealed(knownAfter)).toHaveLength(0);
+  });
+
+  it('ignores controls inside an open picker dialog', () => {
+    document.body.innerHTML = `
+      <form id="f"><div><label for="no">清算会员号</label><input id="no" type="text" readonly /></div></form>
+      <div class="el-overlay"><div class="el-overlay-dialog"><div class="el-dialog">
+        <table><tbody><tr>
+          <td class="el-table__cell"><div class="cell"><label class="el-radio">
+            <span class="el-radio__input"><input class="el-radio__original" type="radio" name="pick" value="QX0001" /></span>
+          </label></div></td>
+          <td class="el-table__cell"><div class="cell">河南某清算中心</div></td>
+        </tr></tbody></table>
+      </div></div></div>`;
+    const known = [document.getElementById('no')!];
+    const inDialog = scanDocument(document).filter((c) => c.kind === 'radio-group' && !c.skipped);
+    expect(inDialog).toHaveLength(1);
+    expect(scanRevealed(known)).toHaveLength(0);
   });
 });

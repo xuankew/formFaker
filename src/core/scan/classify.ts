@@ -21,6 +21,17 @@ export function isVisible(el: Element): boolean {
 
 const SKIP_INPUT_TYPES = new Set(['hidden', 'button', 'submit', 'reset', 'image']);
 
+// 真实页的上传控件经常不带 accept（自研组件只在校验代码里写死格式），仅凭 accept 会判成
+// upload-file 并注入 PDF，被页面以「图片格式不正确」拒收。标签与提示文字（「商品图片」
+// 「支持图片格式jpg/png/gif」「尺寸大小为：480*480px」）是更可靠的信号。
+const IMAGE_HINT_RE = /图片|照片|头像|头像图|image|jpe?g|png|gif|webp|bmp|尺寸大小为?\s*[:：]?\s*\d/i;
+
+export function hintSaysImage(root: Element): boolean {
+  const scope =
+    root.closest('.el-form-item, .ant-form-item, [class*="form-item"], td, .cell') ?? root.parentElement;
+  return !!scope && IMAGE_HINT_RE.test(scope.textContent ?? '');
+}
+
 export function classifyNative(el: HTMLElement): Kind | null {
   const tag = el.tagName.toLowerCase();
   if (tag === 'textarea') return 'textarea';

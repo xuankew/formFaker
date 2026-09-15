@@ -12,10 +12,12 @@ beforeAll(() => {
   };
 });
 
-const shell = (inner: string) => {
-  document.body.innerHTML = `<div class="el-form-item"><label class="el-form-item__label">清算会员号</label>${inner}</div>`;
+const shellLabeled = (label: string, inner: string) => {
+  document.body.innerHTML = `<div class="el-form-item"><label class="el-form-item__label">${label}</label>${inner}</div>`;
   return document.querySelector('input') as HTMLInputElement;
 };
+
+const shell = (inner: string) => shellLabeled('清算会员号', inner);
 
 describe('lookup scan', () => {
   it('keeps a readonly input with a picker icon fillable instead of skipping it', () => {
@@ -173,5 +175,171 @@ describe('lookup fill', () => {
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
     expect(directRowClicks).toBe(1);
     expect(input.value).toBe('A001');
+  });
+});
+
+// 真实形态（SRM「查询税收编码」）：没有 footer、没有单选列，提交靠每行 操作 列的「选择」链接。
+const taxDialog = (actionHtml: string) => `
+  <div class="el-overlay"><div class="el-dialog" style="display:none">
+    <div class="el-dialog__header"><span class="el-dialog__title">选择税收编码</span><button class="el-dialog__headerbtn">×</button></div>
+    <div class="el-dialog__body">
+      <input class="kw" placeholder="请输入税收编码" />
+      <button class="el-button">搜索</button><button class="el-button">重置</button><button class="el-button">新增</button>
+      <div class="el-table">
+        <table class="el-table__header-wrapper"><thead><tr><th>税收编码</th><th>货物和劳务名称</th><th>税率</th><th>操作</th></tr></thead></table>
+        <table class="el-table__body-wrapper"><tbody>
+          <tr><td>1010101</td><td>稻谷</td><td>9%</td><td>${actionHtml}</td></tr>
+          <tr><td>1010102</td><td>小麦</td><td>9%</td><td>${actionHtml}</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+  </div></div>
+`;
+
+const TAX_FIELD = '<div class="el-input"><input readonly placeholder="请选择" /><span class="el-input__suffix"><i class="el-icon-search"></i></span></div>';
+
+function mountDialog(label: string, dialogHtml: string, onPick: (row: HTMLTableRowElement) => string | null) {
+  const input = shellLabeled(label, `${TAX_FIELD}${dialogHtml}`);
+  const dialog = document.querySelector('.el-dialog') as HTMLElement;
+  const trigger = document.querySelector('.el-icon-search') as HTMLElement;
+  trigger.addEventListener('click', () => { dialog.style.display = ''; });
+  dialog.querySelector('.el-dialog__headerbtn')!.addEventListener('click', () => { dialog.style.display = 'none'; });
+  for (const pick of Array.from(dialog.querySelectorAll<HTMLElement>('.pick'))) {
+    pick.addEventListener('click', () => {
+      const value = onPick(pick.closest('tr') as HTMLTableRowElement);
+      if (value !== null) input.value = value;
+      dialog.style.display = 'none';
+    });
+  }
+  const cand: FieldCandidate = { label, kind: 'lookup', root: input, targets: [input], trigger };
+  return { input, dialog, cand };
+}
+
+function mountTax(label: string, actionHtml: string, onPick: (row: HTMLTableRowElement) => string | null) {
+  return mountDialog(label, taxDialog(actionHtml), onPick);
+}
+
+// 固定右列（AntD v3 / Element UI 克隆表）：可点的「选择」在兄弟表格的同序号行里，
+// 我们自己那行里的同名链接被覆盖层挡住，点它没有任何反应。
+const fixedRightDialog = `
+  <div class="el-overlay"><div class="el-dialog" style="display:none">
+    <div class="el-dialog__header"><button class="el-dialog__headerbtn">×</button></div>
+    <div class="el-dialog__body">
+      <div class="el-table">
+        <table class="el-table__header-wrapper"><thead><tr><th>税收编码</th><th>货物和劳务名称</th><th>操作</th></tr></thead></table>
+        <table class="el-table__body-wrapper"><tbody>
+          <tr><td>1010101</td><td>稻谷</td><td><a class="el-link covered">选择</a></td></tr>
+          <tr><td>1010102</td><td>小麦</td><td><a class="el-link covered">选择</a></td></tr>
+        </tbody></table>
+        <div class="el-table__fixed-right">
+          <table class="el-table__fixed-body-wrapper"><tbody>
+            <tr><td><a class="el-link pick">选择</a></td></tr>
+            <tr><td><a class="el-link pick">选择</a></td></tr>
+          </tbody></table>
+        </div>
+      </div>
+    </div>
+  </div></div>
+`;
+
+describe('lookup fill: 真实页加固', () => {
+  it('reaches the commit control inside a fixed-column clone table', async () => {
+    // 克隆行只有 操作 一格，记录要靠行序号还原——和真实组件一样。
+    const { input, dialog, cand } = mountDialog('税收编码', fixedRightDialog, (row) => {
+      const idx = Array.from(row.parentElement!.children).indexOf(row);
+      return ['1010101', '1010102'][idx] ?? '';
+    });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
+    expect(dialog.style.display).toBe('none');
+  });
+
+  it('finds an action rendered as a leaf node no selector covers', async () => {
+    const { input, cand } = mountTax('税收编码', '<div class="op edit">编辑</div><div class="op pick">选择</div>', (row) => row.cells[0].textContent ?? '');
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
+  });
+
+  it('clicks the inner node when that is where the handler sits', async () => {
+    // el-link 的 DOM 形态，但监听绑在内层 span 上：点外层 <a> 不会触发它。
+    const { input, cand } = mountTax(
+      '税收编码',
+      '<a class="el-link"><span class="el-link__inner pick">选择</span></a>',
+      (row) => row.cells[0].textContent ?? '',
+    );
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
+  });
+
+  it('writes the record back again when the framework reverts the first write', async () => {
+    const { input, cand } = mountTax('货物和劳务名称', '<a class="el-link pick">选择</a>', () => null);
+    let writes = 0;
+    let reverts = 0;
+    input.addEventListener('input', () => {
+      writes++;
+      if (reverts === 0) {
+        reverts++;
+        input.value = '';
+      }
+    });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(reverts).toBe(1);
+    expect(writes).toBe(2);
+    expect(input.value).toBe('稻谷');
+  });
+
+  it('reports a picker that closes itself without the value sticking', async () => {
+    const { input, cand } = mountTax('货物和劳务名称', '<a class="el-link pick">选择</a>', () => null);
+    input.addEventListener('input', () => { input.value = ''; });
+    const err = await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER).then(
+      () => new Error('expected fillLookup to fail'),
+      (e: Error) => e,
+    );
+    expect(err.message).toContain('closed=true');
+    expect(err.message).toContain('record=稻谷');
+  });
+
+  it('reports the dialog DOM inventory when nothing commits', async () => {
+    const { input, cand } = mountTax('税收编码', '<span class="muted">查看</span>', () => null);
+    // 框架自己持有该字段的值，脚本写入会被立刻还原——真实页最难的一种。
+    input.addEventListener('input', () => { input.value = ''; });
+    const err = await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER).then(
+      () => new Error('expected fillLookup to fail'),
+      (e: Error) => e,
+    );
+    expect(err.message).toContain('选择后未回填到输入框');
+    expect(err.message).toContain('rows=2 tables=2');
+    expect(err.message).toContain('input=live:""');
+    expect(err.message).toContain('actions=span.muted:查看');
+  });
+});
+
+describe('lookup fill: 行内提交', () => {
+  it('clicks the row-level 选择 link, not 编辑 and not the second row', async () => {
+    let edits = 0;
+    const { input, dialog, cand } = mountTax('税收编码', '<a class="el-link edit">编辑</a><a class="el-link pick">选择</a>', (row) => row.cells[0].textContent ?? '');
+    for (const el of Array.from(dialog.querySelectorAll('.edit'))) el.addEventListener('click', () => { edits++; });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
+    expect(edits).toBe(0);
+    expect(dialog.style.display).toBe('none');
+  });
+
+  it('finds the commit control when it is a plain span', async () => {
+    const { input, cand } = mountTax('税收编码', '<span class="op edit">编辑</span><span class="op pick">选择</span>', (row) => row.cells[0].textContent ?? '');
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
+  });
+
+  it('writes the record back itself when the dialog closes without filling the input', async () => {
+    const { input, cand } = mountTax('货物和劳务名称', '<a class="el-link pick">选择</a>', () => null);
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('稻谷');
+  });
+
+  it('falls back to the first data cell when no header matches the field label', async () => {
+    const { input, cand } = mountTax('商品编码', '<a class="el-link pick">选择</a>', () => null);
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(input.value).toBe('1010101');
   });
 });

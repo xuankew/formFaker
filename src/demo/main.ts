@@ -1,5 +1,5 @@
 import { createApp, onMounted, reactive, ref } from 'vue';
-import ElementPlus from 'element-plus';
+import ElementPlus, { ElMessage } from 'element-plus';
 import 'element-plus/dist/index.css';
 
 const regionOptions = [
@@ -112,11 +112,58 @@ const template = `
     <el-form-item label="上传logo">
       <el-upload action="#" :auto-upload="false" accept="image/*"><el-button>选择图片</el-button></el-upload>
     </el-form-item>
+    <el-form-item label="商品图片">
+      <el-upload v-model:file-list="model.goodsImgs" list-type="picture-card" accept="image/*" :auto-upload="false" />
+    </el-form-item>
+    <el-form-item label="商品详情图片">
+      <div style="display:flex;gap:8px">
+        <el-upload v-model:file-list="model.detailImgs1" list-type="picture-card" accept="image/*" :auto-upload="false" />
+        <el-upload v-model:file-list="model.detailImgs2" list-type="picture-card" accept="image/*" :auto-upload="false" />
+        <el-upload v-model:file-list="model.detailImgs3" list-type="picture-card" accept="image/*" :auto-upload="false" />
+      </div>
+    </el-form-item>
+    <el-form-item label="商品主图">
+      <div>
+        <el-upload
+          v-model:file-list="model.mainImgs"
+          list-type="picture-card"
+          accept="image/*"
+          :before-upload="checkMainSize"
+          :http-request="fakeUpload"
+        />
+        <div style="color:#e6a23c;font-size:12px">支持图片格式jpg/png/gif，建议单张图片50KB以内，尺寸大小为：480*480px</div>
+      </div>
+    </el-form-item>
+    <el-form-item label="商品轮播图">
+      <div>
+        <el-upload v-model:file-list="model.bannerImgs" :auto-upload="false"><el-button>上传图片</el-button></el-upload>
+        <div style="color:#e6a23c;font-size:12px">支持图片格式jpg/png/gif，建议单张图片100KB以内，尺寸大小为：750*564px</div>
+      </div>
+    </el-form-item>
+    <el-form-item label="供应商资质图">
+      <div>
+        <el-upload
+          v-model:file-list="model.qualImgs"
+          list-type="picture-card"
+          accept="image/*"
+          :before-upload="checkJpegOnly"
+          :http-request="fakeUpload"
+        />
+        <div style="color:#e6a23c;font-size:12px">仅支持jpg/jpeg格式，尺寸大小为：800*800px</div>
+      </div>
+    </el-form-item>
     <el-form-item label="企业级账号"><el-input v-model="model.account" disabled placeholder="企业级账号" /></el-form-item>
     <el-form-item label="清算会员号">
       <el-input v-model="model.clearingNo" readonly placeholder="请选择">
         <template #suffix>
           <span class="el-icon el-icon-search" style="cursor:pointer" @click="pickerVisible = true">🔍</span>
+        </template>
+      </el-input>
+    </el-form-item>
+    <el-form-item label="税收编码">
+      <el-input v-model="model.taxCode" readonly placeholder="请选择">
+        <template #suffix>
+          <span class="el-icon el-icon-search" style="cursor:pointer" @click="taxPickerVisible = true">🔍</span>
         </template>
       </el-input>
     </el-form-item>
@@ -177,6 +224,26 @@ const template = `
       <el-button type="primary" @click="confirmPick">确定</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="taxPickerVisible" title="查询税收编码" width="720px">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <el-input v-model="taxKeyword" placeholder="请输入税收编码" clearable style="width:220px" />
+      <el-button type="primary" @click="searchTax">搜索</el-button>
+      <el-button @click="taxKeyword = ''">重置</el-button>
+      <el-button @click="taxKeyword = ''">新增</el-button>
+    </div>
+    <el-table :data="taxRows">
+      <el-table-column prop="code" label="税收编码" width="140" />
+      <el-table-column prop="name" label="货物和劳务名称" />
+      <el-table-column prop="rate" label="税率" width="90" />
+      <el-table-column label="操作" width="130" fixed="right">
+        <template #default="s">
+          <el-link type="primary" :underline="false" style="margin-right:12px">编辑</el-link>
+          <el-link type="primary" :underline="false" @click="pickTax(s.row)">选择</el-link>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
 </div>
 `;
 
@@ -187,7 +254,11 @@ const app = createApp({
       name: '', nature: '', scope: [] as string[], region: [] as string[], found: '',
       range: null as string[] | null, staff: 1, tax: '', cate: [] as string[], on: false, account: '',
       prodType: '',
-      clearingNo: '', capacity: '', lines: '', clients: '', materials: '',
+      clearingNo: '', taxCode: '', capacity: '', lines: '', clients: '', materials: '',
+      goodsImgs: [] as unknown[], detailImgs1: [] as unknown[], detailImgs2: [] as unknown[], detailImgs3: [] as unknown[],
+      mainImgs: [] as unknown[],
+      bannerImgs: [] as unknown[],
+      qualImgs: [] as unknown[],
       contacts: [
         { name: '', role: '', code: 86, mobile: '', email: '' },
         { name: '', role: '', code: 86, mobile: '', email: '' },
@@ -204,6 +275,22 @@ const app = createApp({
       model.clearingNo = pickedId.value;
       pickerVisible.value = false;
     };
+    const TAX_ALL = [
+      { code: '1010101', name: '稻谷', rate: '9%' },
+      { code: '1010102', name: '小麦', rate: '9%' },
+      { code: '1030101', name: '食用植物油', rate: '13%' },
+    ];
+    const taxPickerVisible = ref(false);
+    const taxKeyword = ref('');
+    const taxRows = ref([...TAX_ALL]);
+    const searchTax = () => {
+      const kw = taxKeyword.value.trim();
+      taxRows.value = kw ? TAX_ALL.filter((r) => r.code.includes(kw) || r.name.includes(kw)) : [...TAX_ALL];
+    };
+    const pickTax = (row: { code: string }) => {
+      model.taxCode = row.code;
+      taxPickerVisible.value = false;
+    };
     const addContact = () => model.contacts.push({ name: '', role: '', code: 86, mobile: '', email: '' });
 
     const lazyMounted = ref(false);
@@ -219,6 +306,25 @@ const app = createApp({
       io.observe(anchor);
     });
 
+    const checkMainSize = (file: File) =>
+      new Promise<boolean>((resolve) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        const done = (ok: boolean) => {
+          URL.revokeObjectURL(url);
+          resolve(ok);
+        };
+        img.onload = () => done(img.naturalWidth === 480 && img.naturalHeight === 480);
+        img.onerror = () => done(false);
+        img.src = url;
+      });
+    const fakeUpload = () => Promise.resolve({ url: 'https://example.invalid/fake.png' });
+    const checkJpegOnly = (file: File) => {
+      const ok = /jpe?g/.test(file.type);
+      if (!ok) ElMessage.error('图片格式不正确，仅支持jpg/jpeg');
+      return ok;
+    };
+
     const dump = () => {
       console.log('[demo] element-plus model =', JSON.parse(JSON.stringify(model)));
       const native = new FormData(document.getElementById('native-form') as HTMLFormElement);
@@ -228,6 +334,7 @@ const app = createApp({
     return {
       model, regionOptions, dump, activeTab: ref('native'),
       pickerVisible, pickedId, pickerRows, pickRow, confirmPick, addContact, lazyMounted,
+      taxPickerVisible, taxKeyword, taxRows, searchTax, pickTax, checkMainSize, fakeUpload, checkJpegOnly,
     };
   },
 });

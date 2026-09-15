@@ -1,0 +1,117 @@
+/* 设置面板样式：Popup 内嵌设置视图与独立选项页共用（随 SettingsPanel 引入）。 */
+.ff-settings {
+  --s-line: #e5e8ee;
+  --s-line-strong: #d5dae3;
+  --s-ink: #1f2328;
+  --s-ink-2: #57606a;
+  --s-ink-3: #8b949e;
+  --s-brand: #2f6feb;
+  --s-danger: #cf222e;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font: 13px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--s-ink);
+}
+.ff-settings .lead { margin: 0; color: var(--s-ink-2); }
+.ff-settings .card {
+  background: #fff;
+  border: 1px solid var(--s-line);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ff-settings .card > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ff-settings .sub { font-weight: 400; color: var(--s-ink-3); font-size: 12px; }
+.ff-settings .field { display: flex; flex-direction: column; gap: 4px; }
+.ff-settings .field > span { font-weight: 600; }
+.ff-settings .hint { font-weight: 400; color: var(--s-ink-3); font-size: 12px; margin-left: 6px; }
+.ff-settings input[type="text"] {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #f4f6f8;
+  font-size: 12.5px;
+  color: var(--s-ink);
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+.ff-settings input[type="text"]:hover { background: #eef1f4; }
+.ff-settings input[type="text"]:focus {
+  outline: none;
+  background: #fff;
+  border-color: var(--s-brand);
+  box-shadow: 0 0 0 3px rgba(47, 111, 235, .15);
+}
+.ff-settings input[type="checkbox"] { accent-color: var(--s-brand); margin: 0; }
+.ff-settings .rowline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.ff-settings button {
+  border: 1px solid var(--s-line-strong);
+  background: #fff;
+  color: var(--s-ink);
+  border-radius: 7px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background .12s, border-color .12s;
+}
+.ff-settings button:hover { background: #f2f4f7; border-color: #c6ccd6; }
+.ff-settings button.primary { background: var(--s-brand); border-color: var(--s-brand); color: #fff; font-weight: 600; }
+.ff-settings .rowline button.primary:hover { background: #2559c9; border-color: #2559c9; }
+.ff-settings button.ghost { border-color: transparent; background: transparent; color: var(--s-ink-2); }
+.ff-settings button.ghost:hover { background: #f2f4f7; border-color: transparent; color: var(--s-ink); }
+.ff-settings button.danger-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--s-danger);
+  padding: 2px 8px;
+}
+.ff-settings .pool button.danger-ghost:hover { background: #fff5f5; border-color: transparent; }
+
+.ff-settings .ok { color: #1a7f37; }
+.ff-settings .bad { color: var(--s-danger); }
+
+.ff-settings .drop {
+  border: 1px dashed var(--s-line-strong);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  color: var(--s-ink-2);
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.ff-settings .drop:hover { border-color: var(--s-brand); background: #f5f9ff; color: var(--s-brand); }
+.ff-settings .drop input { display: none; }
+
+.ff-settings .pool { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ff-settings .pool li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--s-line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #fbfcfd;
+}
+.ff-settings .pool .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-settings .pool .meta { color: var(--s-ink-3); font-size: 12px; white-space: nowrap; }
+
+.ff-settings .foot { margin: 0; color: var(--s-ink-3); font-size: 12px; }
+.ff-settings code { background: #f0f2f5; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+
+/* 独立选项页（兜底入口）的外层版式 */
+body:has(.options-page) { background: #f5f6f8; }
+.options-page { max-width: 640px; margin: 32px auto; padding: 0 16px 48px; }
+.options-page > h2 { margin: 0 0 14px; font-size: 17px; font-weight: 700; color: #1f2328; }
