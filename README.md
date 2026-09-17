@@ -2,11 +2,11 @@
 
 Chrome 扩展：识别页面上的表单控件，推断中文业务语义（姓名 / 手机号 / 统一社会信用代码 / 注册资本 / 证照类型联动 …），离线生成合规随机数据并填进去。用于测试环境造数，不发任何网络请求。
 
-当前版本：0.1.0（MV3，建议 Chrome 116 及以上）
+当前版本：0.1.1（MV3，建议 Chrome 116 及以上）
 
 ## 安装
 
-1. 下载 / 解压 `release/FormFaker-0.1.0.zip` 到任意目录（目录不能删，Chrome 是按需读取的）。
+1. 下载 / 解压 `release/FormFaker-0.1.1.zip` 到任意目录（目录不能删，Chrome 是按需读取的）。
 2. 打开 `chrome://extensions`，右上角开启「开发者模式」。
 3. 点「加载已解压的扩展程序」，选中解压出来的目录（里面有 `manifest.json`）。
 4. 建议把扩展图标固定到工具栏，方便随时点开。
@@ -79,9 +79,28 @@ pnpm preview      # 本地预览 dist（含 demo.html）
 打包发布：
 
 ```bash
-pnpm build && cd dist && zip -qr ../release/FormFaker-0.1.0.zip . -x harness.js
+pnpm build
+cd dist && zip -qr ../release/FormFaker-0.1.1.zip . -x harness.js
+cd dist && shasum -a 256 background.js content.js assets/*.js > ../release/SHA256SUMS.txt
 ```
 
 `harness.js` 是开发期的自检工具（`window.__ff.selfCheck()`），不随包发布。`dist/` 与 `release/` 都不入库。
+
+构建产物**文件名固定、不带内容哈希**（见下节「企业安全策略加白」），所以每次构建的文件名都一样，只有 `SHA256SUMS.txt` 里的哈希会随代码变化——发新版时把这份清单一起给安全团队即可。也因此**从文件名看不出是哪次构建**：发版前记得手动 bump `public/manifest.json` 与 `package.json` 的 `version`（扩展卡片上显示的就是它）。
+
+### 企业安全策略加白
+
+公司安全策略按 `.js` 结尾拦截脚本。本扩展运行时需要加白的 JS 共 6 个，文件名跨构建稳定：
+
+```
+background.js              # service worker
+content.js                 # 注入到业务页的填充引擎
+assets/popup.js            # 弹窗入口
+assets/options.js          # 设置页入口
+assets/SettingsPanel.js    # popup 与 options 共用的 chunk（含 React 运行时）
+assets/demo.js             # 仅 demo.html 用，正式业务页不加载
+```
+
+另有 3 个同名 `.css`（`assets/popup.css`、`assets/SettingsPanel.css`、`assets/demo.css`）与 `icons/` 下的 PNG，若策略也拦静态资源一并加白。`manifest.json` 与 HTML 文件里没有内联 `<script>`，扩展不含远程脚本、`eval` 或动态注入的 JS。
 
 设计与实现细节见 `docs/product-design.md`、`docs/technical-design.md`。
