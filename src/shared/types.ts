@@ -94,17 +94,27 @@ export const RANDOM_OPTION_PLACEHOLDER = '(填充时随机选择)';
 export interface GenRules {
   dateFormat: string;
   datetimeFormat: string;
+  // 开启时普通日期只落在今天及以后（业务表单多为有效期/到期日，过去的日期常被判非法）。
+  // 历史语义字段（成立/出生/毕业/入职/注册）不受影响，否则会生成未来的出生日期。
+  dateFromToday: boolean;
   emailDomain: string;
   phonePrefixes: string;
   companySuffixes: string;
+  // 造数标记：原样贴在名称类文本（词典未命中的 generic）与企业名两端，便于事后在业务
+  // 系统里检索出某个人造的数据。留空即不加；分隔符由用户自己写（如 `czy-`）。
+  namePrefix: string;
+  nameSuffix: string;
 }
 
 export const DEFAULT_GEN_RULES: GenRules = {
   dateFormat: 'YYYY-MM-DD',
   datetimeFormat: 'YYYY-MM-DD HH:mm:ss',
+  dateFromToday: true,
   emailDomain: '',
   phonePrefixes: '',
   companySuffixes: '',
+  namePrefix: '',
+  nameSuffix: '',
 };
 
 export interface Settings {

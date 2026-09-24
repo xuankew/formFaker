@@ -167,6 +167,13 @@ const template = `
         </template>
       </el-input>
     </el-form-item>
+    <el-form-item label="跟进组织">
+      <el-input v-model="model.followOrg" readonly placeholder="请选择">
+        <template #suffix>
+          <span class="el-icon el-icon-search" style="cursor:pointer" @click="orgPickerVisible = true">🔍</span>
+        </template>
+      </el-input>
+    </el-form-item>
     <el-form-item>
       <el-button type="primary" @click="dump">打印表单模型（验证框架状态同步）</el-button>
     </el-form-item>
@@ -244,6 +251,36 @@ const template = `
       </el-table-column>
     </el-table>
   </el-dialog>
+
+  <!-- 树形选择弹窗（SRM「选择跟进组织」形态）：父节点是组织组，叶子才是可选公司 -->
+  <el-dialog v-model="orgPickerVisible" title="选择跟进组织" width="560px">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <el-input v-model="orgKeyword" placeholder="请输入名称或编码" clearable style="width:220px" />
+      <el-button type="primary" @click="searchOrg">查询</el-button>
+      <el-button @click="orgKeyword = ''; searchOrg()">重置</el-button>
+      <el-button link type="primary" @click="expandOrgLevel">展开1级</el-button>
+    </div>
+    <el-tree
+      ref="orgTree"
+      :data="orgRows"
+      node-key="id"
+      :props="{ label: 'name' }"
+      :default-expanded-keys="orgExpanded"
+      :expand-on-click-node="false"
+      :filter-node-method="filterOrg"
+      highlight-current
+      style="max-height:320px;overflow:auto"
+      @node-click="pickOrgNode"
+    >
+      <template #default="s">
+        <el-radio v-model="pickedOrg" :value="s.data.id" @click.stop>{{ s.data.name }}</el-radio>
+      </template>
+    </el-tree>
+    <template #footer>
+      <el-button @click="orgPickerVisible = false">取消</el-button>
+      <el-button type="primary" @click="confirmOrg">确定</el-button>
+    </template>
+  </el-dialog>
 </div>
 `;
 
@@ -254,7 +291,7 @@ const app = createApp({
       name: '', nature: '', scope: [] as string[], region: [] as string[], found: '',
       range: null as string[] | null, staff: 1, tax: '', cate: [] as string[], on: false, account: '',
       prodType: '',
-      clearingNo: '', taxCode: '', capacity: '', lines: '', clients: '', materials: '',
+      clearingNo: '', taxCode: '', followOrg: '', capacity: '', lines: '', clients: '', materials: '',
       goodsImgs: [] as unknown[], detailImgs1: [] as unknown[], detailImgs2: [] as unknown[], detailImgs3: [] as unknown[],
       mainImgs: [] as unknown[],
       bannerImgs: [] as unknown[],
@@ -290,6 +327,44 @@ const app = createApp({
     const pickTax = (row: { code: string }) => {
       model.taxCode = row.code;
       taxPickerVisible.value = false;
+    };
+
+    // 树形选择弹窗的数据：前两条是组织组（不可提交），后面才是可选公司。
+    interface OrgNode { id: string; name: string; children?: OrgNode[] }
+    const ORG_ALL: OrgNode[] = [
+      {
+        id: 'MXBCVN', name: 'MXBCVN 蜜雪冰城-越南',
+        children: [
+          { id: 'HW050001', name: 'HW050001 雪王环球有限公司' },
+          { id: 'MXBCML', name: 'MXBCML 雪王马来西亚公司' },
+        ],
+      },
+      {
+        id: 'ML', name: 'ML 马来西亚',
+        children: [{ id: 'XYKML', name: 'XYKML 雪王咖啡马来西亚' }],
+      },
+      { id: 'GYS202609190001', name: 'GYS202609190001 郑州供应商一' },
+      { id: 'GYS202609190002', name: 'GYS202609190002 郑州供应商二' },
+      { id: 'GYS202609220001', name: 'GYS202609220001 长沙供应商三' },
+    ];
+    const ORG_LEAVES = ['HW050001', 'MXBCML', 'XYKML', 'GYS202609190001', 'GYS202609190002', 'GYS202609220001'];
+    const orgPickerVisible = ref(false);
+    const orgKeyword = ref('');
+    const orgTree = ref();
+    const orgRows = ORG_ALL;
+    const pickedOrg = ref('');
+    // 只默认展开第一组：折叠组的子节点在 EP 里根本不渲染，正好验证「叶子优先 + 无叶子才展开」。
+    const orgExpanded = ref(['MXBCVN']);
+    const pickOrgNode = (data: { id: string }) => { pickedOrg.value = data.id; };
+    const filterOrg = (value: string, data: { name: string }) => !value || data.name.includes(value);
+    const searchOrg = () => orgTree.value?.filter(orgKeyword.value.trim());
+    const expandOrgLevel = () => { orgExpanded.value = ORG_ALL.filter((o) => o.children).map((o) => o.id); };
+    const confirmOrg = () => {
+      const flat = ORG_ALL.flatMap((o) => [o, ...(o.children ?? [])]);
+      const hit = flat.find((o) => o.id === pickedOrg.value);
+      // 组节点没有对应公司，业务上不允许提交——真实页会拦，这里照做。
+      if (hit && ORG_LEAVES.includes(hit.id)) model.followOrg = hit.name;
+      orgPickerVisible.value = false;
     };
     const addContact = () => model.contacts.push({ name: '', role: '', code: 86, mobile: '', email: '' });
 
@@ -335,6 +410,8 @@ const app = createApp({
       model, regionOptions, dump, activeTab: ref('native'),
       pickerVisible, pickedId, pickerRows, pickRow, confirmPick, addContact, lazyMounted,
       taxPickerVisible, taxKeyword, taxRows, searchTax, pickTax, checkMainSize, fakeUpload, checkJpegOnly,
+      orgPickerVisible, orgKeyword, orgTree, orgRows, pickedOrg, orgExpanded,
+      pickOrgNode, filterOrg, searchOrg, expandOrgLevel, confirmOrg,
     };
   },
 });

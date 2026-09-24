@@ -53,6 +53,11 @@ describe('geo coordinate derivation', () => {
     expect(parseRegionNames('陕西省榆林市清涧县XX路1号')).toEqual({ province: '陕西省', city: '榆林市' });
   });
 
+  it('ignores the placeholder city rows instead of matching a bare 县', () => {
+    expect(parseRegionNames('重庆市潼南县XX路1号')).toEqual({ province: '重庆市', city: '' });
+    expect(parseRegionNames('北京市市辖区东城区XX路1号')).toEqual({ province: '北京市', city: '' });
+  });
+
   it('returns null when no known province appears', () => {
     expect(coordForText('some unrelated text')).toBeNull();
   });

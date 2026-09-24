@@ -19,6 +19,11 @@ const shellLabeled = (label: string, inner: string) => {
 
 const shell = (inner: string) => shellLabeled('清算会员号', inner);
 
+// 记录是随机挑的，所以断言只能落在候选集合上，不能写死第一条。
+const MEMBER_NOS = ['A001', 'A002'];
+const TAX_CODES = ['1010101', '1010102'];
+const TAX_NAMES = ['稻谷', '小麦'];
+
 describe('lookup scan', () => {
   it('keeps a readonly input with a picker icon fillable instead of skipping it', () => {
     const input = shell('<div class="el-input"><input readonly placeholder="请选择" /><span class="el-input__suffix"><i class="el-icon-search"></i></span></div>');
@@ -77,7 +82,9 @@ function mountLookup(dialogHtml: string, onConfirm: (row: HTMLTableRowElement) =
   });
   const footer = Array.from(dialog.querySelectorAll('button')).find((b) => /确\s*定/.test(b.textContent ?? ''))!;
   footer.addEventListener('click', () => {
-    const row = dialog.querySelector('tbody tr') as HTMLTableRowElement;
+    // 真实弹窗的确定提交的是被勾选的那一行，不是固定第一行。
+    const checked = dialog.querySelector<HTMLInputElement>('tbody input[name="pick"]:checked');
+    const row = (checked?.closest('tr') ?? dialog.querySelector('tbody tr')) as HTMLTableRowElement;
     input.value = onConfirm(row);
     dialog.style.display = 'none';
   });
@@ -86,10 +93,10 @@ function mountLookup(dialogHtml: string, onConfirm: (row: HTMLTableRowElement) =
 }
 
 describe('lookup fill', () => {
-  it('opens the dialog, picks the first record and confirms', async () => {
+  it('opens the dialog, picks a record at random and confirms', async () => {
     const { input, dialog, cand } = mountLookup(DIALOG_HTML, (row) => row.cells[1].textContent ?? '');
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('A001');
+    expect(MEMBER_NOS).toContain(input.value);
     expect(dialog.style.display).toBe('none');
   });
 
@@ -158,7 +165,7 @@ describe('lookup fill', () => {
     const spaced = DIALOG_HTML.replace('>确定</button>', '>确 定</button>');
     const { input, cand } = mountLookup(spaced, (row) => row.cells[1].textContent ?? '');
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('A001');
+    expect(MEMBER_NOS).toContain(input.value);
   });
 
   it('falls back to clicking the row when the radio wrapper swallows the click', async () => {
@@ -167,14 +174,15 @@ describe('lookup fill', () => {
       '<span class="el-radio"><input type="radio" name="pick" /></span>',
     );
     const { input, cand, dialog } = mountLookup(wrapped, (row) => row.cells[1].textContent ?? '');
-    const firstRow = dialog.querySelector('tbody tr') as HTMLElement;
     let directRowClicks = 0;
     // The wrapper click bubbles up to the row as well; only a click aimed at the row
     // itself proves the fallback ran.
-    firstRow.addEventListener('click', (e) => { if (e.target === firstRow) directRowClicks++; });
+    for (const row of Array.from(dialog.querySelectorAll<HTMLElement>('tbody tr'))) {
+      row.addEventListener('click', (e) => { if (e.target === row) directRowClicks++; });
+    }
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
     expect(directRowClicks).toBe(1);
-    expect(input.value).toBe('A001');
+    expect(MEMBER_NOS).toContain(input.value);
   });
 });
 
@@ -250,14 +258,14 @@ describe('lookup fill: 真实页加固', () => {
       return ['1010101', '1010102'][idx] ?? '';
     });
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
     expect(dialog.style.display).toBe('none');
   });
 
   it('finds an action rendered as a leaf node no selector covers', async () => {
     const { input, cand } = mountTax('税收编码', '<div class="op edit">编辑</div><div class="op pick">选择</div>', (row) => row.cells[0].textContent ?? '');
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
   });
 
   it('clicks the inner node when that is where the handler sits', async () => {
@@ -268,7 +276,7 @@ describe('lookup fill: 真实页加固', () => {
       (row) => row.cells[0].textContent ?? '',
     );
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
   });
 
   it('writes the record back again when the framework reverts the first write', async () => {
@@ -285,7 +293,7 @@ describe('lookup fill: 真实页加固', () => {
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
     expect(reverts).toBe(1);
     expect(writes).toBe(2);
-    expect(input.value).toBe('稻谷');
+    expect(TAX_NAMES).toContain(input.value);
   });
 
   it('reports a picker that closes itself without the value sticking', async () => {
@@ -296,7 +304,7 @@ describe('lookup fill: 真实页加固', () => {
       (e: Error) => e,
     );
     expect(err.message).toContain('closed=true');
-    expect(err.message).toContain('record=稻谷');
+    expect(err.message).toMatch(/record=(稻谷|小麦)/);
   });
 
   it('reports the dialog DOM inventory when nothing commits', async () => {
@@ -308,19 +316,19 @@ describe('lookup fill: 真实页加固', () => {
       (e: Error) => e,
     );
     expect(err.message).toContain('选择后未回填到输入框');
-    expect(err.message).toContain('rows=2 tables=2');
+    expect(err.message).toContain('rows=2 leaves=2 tables=2');
     expect(err.message).toContain('input=live:""');
     expect(err.message).toContain('actions=span.muted:查看');
   });
 });
 
 describe('lookup fill: 行内提交', () => {
-  it('clicks the row-level 选择 link, not 编辑 and not the second row', async () => {
+  it('clicks the row-level 选择 link and never 编辑', async () => {
     let edits = 0;
     const { input, dialog, cand } = mountTax('税收编码', '<a class="el-link edit">编辑</a><a class="el-link pick">选择</a>', (row) => row.cells[0].textContent ?? '');
     for (const el of Array.from(dialog.querySelectorAll('.edit'))) el.addEventListener('click', () => { edits++; });
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
     expect(edits).toBe(0);
     expect(dialog.style.display).toBe('none');
   });
@@ -328,18 +336,117 @@ describe('lookup fill: 行内提交', () => {
   it('finds the commit control when it is a plain span', async () => {
     const { input, cand } = mountTax('税收编码', '<span class="op edit">编辑</span><span class="op pick">选择</span>', (row) => row.cells[0].textContent ?? '');
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
   });
 
   it('writes the record back itself when the dialog closes without filling the input', async () => {
     const { input, cand } = mountTax('货物和劳务名称', '<a class="el-link pick">选择</a>', () => null);
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('稻谷');
+    expect(TAX_NAMES).toContain(input.value);
   });
 
   it('falls back to the first data cell when no header matches the field label', async () => {
     const { input, cand } = mountTax('商品编码', '<a class="el-link pick">选择</a>', () => null);
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect(input.value).toBe('1010101');
+    expect(TAX_CODES).toContain(input.value);
+  });
+});
+
+describe('lookup fill: 随机选择', () => {
+  it('does not always take the first record', async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const { input, cand } = mountLookup(DIALOG_HTML, (row) => row.cells[1].textContent ?? '');
+      await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+      seen.add(input.value);
+    }
+    // 12 次全落在同一条的概率约 0.05%，出现即说明又退回「永远第一条」。
+    expect(seen.size).toBe(MEMBER_NOS.length);
+    expect([...seen].every((v) => MEMBER_NOS.includes(v))).toBe(true);
+  });
+});
+
+// 真实形态（SRM「选择跟进组织」）：Element Plus el-tree，父节点是组织组、叶子才是公司。
+// EP 默认 render-after-expand，折叠节点的子树根本不在 DOM 里。
+const treeNode = (label: string, leaf: boolean, children = '') => `
+  <div class="el-tree-node is-focusable" role="treeitem" aria-expanded="${children ? 'true' : 'false'}">
+    <div class="el-tree-node__content">
+      <span class="el-tree-node__expand-icon${leaf ? ' is-leaf' : ''}"><i class="el-icon"></i></span>
+      <label class="el-radio"><input type="radio" name="org" /><span class="el-radio__label">${label}</span></label>
+    </div>
+    ${children ? `<div class="el-tree-node__children" role="group">${children}</div>` : ''}
+  </div>`;
+
+const ORG_BRANCH = 'MXBCVN 蜜雪冰城-越南';
+const ORG_LEAVES = ['HW050001 雪王环球有限公司', 'MXBCML 雪王马来西亚', 'GYS202609190001 郑州供应商'];
+const ORG_TREE = `
+  <div class="el-tree" role="tree">
+    ${treeNode(ORG_BRANCH, false, treeNode(ORG_LEAVES[0], true) + treeNode(ORG_LEAVES[1], true))}
+    ${treeNode(ORG_LEAVES[2], true)}
+  </div>`;
+
+function mountTree(treeHtml: string, opts: { toolbar?: string; commit?: boolean } = {}) {
+  const { toolbar = '', commit = true } = opts;
+  const input = shellLabeled('跟进组织', `${TAX_FIELD}
+    <div class="el-overlay"><div class="el-dialog" style="display:none">
+      <div class="el-dialog__header"><span class="el-dialog__title">选择跟进组织</span><button class="el-dialog__headerbtn">×</button></div>
+      <div class="el-dialog__body">${toolbar}${treeHtml}</div>
+      <div class="el-dialog__footer"><button class="el-button">取消</button><button class="el-button el-button--primary ok">确定</button></div>
+    </div></div>`);
+  const dialog = document.querySelector('.el-dialog') as HTMLElement;
+  const trigger = document.querySelector('.el-icon-search') as HTMLElement;
+  trigger.addEventListener('click', () => { dialog.style.display = ''; });
+  dialog.querySelector('.el-dialog__headerbtn')!.addEventListener('click', () => { dialog.style.display = 'none'; });
+  dialog.querySelector('.ok')!.addEventListener('click', () => {
+    if (commit) {
+      const checked = dialog.querySelector<HTMLInputElement>('input[name="org"]:checked');
+      input.value = checked?.closest('label')?.querySelector('.el-radio__label')?.textContent ?? '';
+    }
+    dialog.style.display = 'none';
+  });
+  const cand: FieldCandidate = { label: '跟进组织', kind: 'lookup', root: input, targets: [input], trigger };
+  return { input, dialog, cand };
+}
+
+describe('lookup fill: 树形弹窗', () => {
+  it('picks a leaf at random and never the branch node', async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      const { input, cand } = mountTree(ORG_TREE);
+      await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+      expect(ORG_LEAVES).toContain(input.value);
+      seen.add(input.value);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('expands once when every rendered node is a branch', async () => {
+    const { input, dialog, cand } = mountTree(
+      `<div class="el-tree" role="tree">${treeNode(ORG_BRANCH, false)}</div>`,
+      { toolbar: '<span class="el-link expand">展开1级</span>' },
+    );
+    let expands = 0;
+    dialog.querySelector('.expand')!.addEventListener('click', () => {
+      expands++;
+      dialog.querySelector('.el-tree')!.innerHTML = treeNode(ORG_BRANCH, false, treeNode(ORG_LEAVES[0], true));
+    });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(expands).toBe(1);
+    expect(input.value).toBe(ORG_LEAVES[0]);
+  });
+
+  it('falls back to a branch when the tree holds no leaf at all', async () => {
+    const { input, cand } = mountTree(
+      `<div class="el-tree" role="tree">${treeNode(ORG_BRANCH, false)}${treeNode('ML 马来西亚', false)}</div>`,
+    );
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect([ORG_BRANCH, 'ML 马来西亚']).toContain(input.value);
+  });
+
+  it('reads only the chosen node own line, not its whole subtree', async () => {
+    // 自定义选择器：确定后自己关掉但不写值，回填只能靠我们读到的 record。
+    const { input, cand } = mountTree(ORG_TREE, { commit: false });
+    await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
+    expect(ORG_LEAVES).toContain(input.value);
   });
 });

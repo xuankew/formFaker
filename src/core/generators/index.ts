@@ -78,6 +78,11 @@ function parseList(s: string): string[] {
   return s.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
 }
 
+// 原样贴上用户配置的标记，不自动补分隔符（要 `-` 就写在设置里）。
+function mark(value: string, rules: GenRules): string {
+  return `${rules.namePrefix.trim()}${value}${rules.nameSuffix.trim()}`;
+}
+
 function randomDate(from: Date, to: Date, withTime: boolean): string {
   const t = from.getTime() + Math.random() * (to.getTime() - from.getTime());
   return fmtDate(new Date(t), withTime);
@@ -87,17 +92,21 @@ function randomDateIn(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.random() * (to.getTime() - from.getTime()));
 }
 
-function dateBounds(label: string): { from: Date; to: Date } {
+function dateBounds(label: string, rules: GenRules): { from: Date; to: Date } {
   const now = Date.now();
-  const historical = /成立|出生|毕业|入职|注册/.test(label);
-  return historical
-    ? { from: new Date('1960-01-01'), to: new Date('2015-12-31') }
-    : { from: new Date(now - 1500 * 86400000), to: new Date(now + 365 * 86400000) };
+  if (/成立|出生|毕业|入职|注册/.test(label)) {
+    return { from: new Date('1960-01-01'), to: new Date('2015-12-31') };
+  }
+  const to = new Date(now + 365 * 86400000);
+  if (!rules.dateFromToday) return { from: new Date(now - 1500 * 86400000), to };
+  const from = new Date(now);
+  from.setHours(0, 0, 0, 0);
+  return { from, to };
 }
 
 function dateFor(ctx: GeneratorCtx, withTime: boolean): string {
   const rules = ctx.rules ?? DEFAULT_GEN_RULES;
-  const { from, to } = dateBounds(ctx.label);
+  const { from, to } = dateBounds(ctx.label, rules);
   return applyFormat(randomDateIn(from, to), withTime ? rules.datetimeFormat : rules.dateFormat);
 }
 
@@ -141,22 +150,24 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
   },
   cnName: () => pick([...SURNAMES]) + Array.from({ length: intBetween(1, 2) }, () => pick([...GIVEN_CHARS])).join(''),
   company: (ctx) => {
-    const custom = parseList((ctx.rules ?? DEFAULT_GEN_RULES).companySuffixes);
+    const rules = ctx.rules ?? DEFAULT_GEN_RULES;
+    const custom = parseList(rules.companySuffixes);
     const suffix = custom.length ? pick(custom) : pick(COMPANY_FORMS);
-    return randomCityName().replace(/市$/, '') + pick(COMPANY_WORDS) + pick(COMPANY_INDUSTRIES) + suffix;
+    return mark(randomCityName().replace(/市$/, '') + pick(COMPANY_WORDS) + pick(COMPANY_INDUSTRIES) + suffix, rules);
   },
   region: () => {
     const r = randomRegionPath();
-    return r.hasArea ? `${r.province}/${r.city}/${r.area}` : `${r.province}/${r.city}`;
+    // 直辖市的市级是占位名，randomRegionPath 已置空，这里按空值省掉该级。
+    return [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('/');
   },
   address: () => {
     const r = randomRegionPath();
-    const base = r.hasArea ? `${r.province}${r.city}${r.area}` : `${r.province}${r.city}`;
+    const base = [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('');
     return `${base}${pick(STREET_NAMES)}${intBetween(1, 999)}号${intBetween(1, 30)}幢${intBetween(101, 2505)}室`;
   },
   lnglat: () => {
     const r = randomRegionPath();
-    return formatLngLat(cityCenter(r.province, r.city));
+    return formatLngLat(cityCenter(r.province, r.city || r.province));
   },
   date: (ctx) => dateFor(ctx, ctx.kind === 'datetime'),
   amount: (ctx) => {
@@ -174,13 +185,16 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
   gender: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(GENDERS) : enumValue(ctx),
   education: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(EDUCATIONS) : enumValue(ctx),
   enum: (ctx) => enumValue(ctx),
-  generic: (ctx) => (ctx.kind === 'number' ? String(intBetween(1, 999)) : `autotest-${Math.random().toString(36).slice(2, 7)}`),
+  generic: (ctx) => {
+    if (ctx.kind === 'number') return String(intBetween(1, 999));
+    return mark(`autotest-${Math.random().toString(36).slice(2, 7)}`, ctx.rules ?? DEFAULT_GEN_RULES);
+  },
 };
 
 export function generate(ctx: GeneratorCtx): string {
   if (ctx.kind === 'daterange') {
     const rules = ctx.rules ?? DEFAULT_GEN_RULES;
-    const { from, to } = dateBounds(ctx.label);
+    const { from, to } = dateBounds(ctx.label, rules);
     const startD = randomDateIn(from, to);
     const endD = new Date(startD.getTime() + (30 + Math.random() * 970) * 86400000);
     return `${applyFormat(startD, rules.dateFormat)} ~ ${applyFormat(endD, rules.dateFormat)}`;

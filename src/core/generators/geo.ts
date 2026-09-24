@@ -1,4 +1,5 @@
 import { CITIES, PROVINCES } from './region-data';
+import { isPlaceholderCity } from './region';
 
 // Single swap point for real city-level centers: populate CITY_CENTERS from an
 // approved dataset and cityCenter() prefers it. Until then coordinates are seeded
@@ -68,7 +69,8 @@ export function formatLngLat(c: [number, number]): string {
 export function parseRegionNames(text: string): { province: string; city: string } | null {
   const prov = PROVINCES.find((p) => text.includes(p[1]));
   if (!prov) return null;
-  const city = CITIES.find((c) => c[2] === prov[0] && text.includes(c[1]));
+  // 跳过「市辖区 / 县」这类占位行：裸「县」字会命中重庆的占位市级行，把坐标钉到错误种子上。
+  const city = CITIES.find((c) => c[2] === prov[0] && !isPlaceholderCity(c[1]) && text.includes(c[1]));
   return { province: prov[1], city: city ? city[1] : '' };
 }
 
