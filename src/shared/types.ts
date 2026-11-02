@@ -1,6 +1,7 @@
 import type { StoredRules } from '../core/rules/types';
+import { DEFAULT_IMAGE, type ImageStyle } from '../core/fill/files';
 
-export type { StoredRules };
+export type { StoredRules, ImageStyle };
 
 export type Kind =
   | 'text'
@@ -55,13 +56,15 @@ export interface FillResult {
   id: string;
   ok: boolean;
   error?: string;
+  // 填充成功后回读到的页面自身校验提示；与 error（扩展填充失败）分开呈现。
+  pageError?: string;
 }
 
 export type ContentRequest =
   | { type: 'ping' }
   | { type: 'scan'; overwrite: boolean; rules: StoredRules }
   | { type: 'regen'; id: string; rules: StoredRules }
-  | { type: 'fill'; cmds: FillCmd[]; overwrite: boolean }
+  | { type: 'fill'; cmds: FillCmd[]; overwrite: boolean; image?: ImageStyle }
   | { type: 'clear' }
   | { type: 'undo' };
 
@@ -75,9 +78,10 @@ export const RANDOM_OPTION_PLACEHOLDER = '(填充时随机选择)';
 
 export interface Settings {
   overwrite: boolean;
+  image: ImageStyle;
 }
 
-export const DEFAULT_SETTINGS: Settings = { overwrite: false };
+export const DEFAULT_SETTINGS: Settings = { overwrite: false, image: DEFAULT_IMAGE };
 
 // User-supplied upload files, persisted in chrome.storage.local. `data` is raw
 // base64 (no data-URL prefix); the fill path matches an entry against the input's

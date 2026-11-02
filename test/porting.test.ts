@@ -125,7 +125,7 @@ describe('导入：逐条规则的收敛', () => {
   });
 });
 
-describe('导入：词库与名称标记', () => {
+describe('导入：词库与数据标记', () => {
   it('空池与非数组值被丢掉，正常池留下', () => {
     const out = importRules(
       JSON.stringify({ pools: { cityTier1: ['北京', '  ', '上海'], empty: [], bad: 'nope', nums: [1, 2] } }),

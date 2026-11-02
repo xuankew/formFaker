@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scanDocument, scanRevealed } from '../src/core/scan';
+import { buildLabelIndex, labelTextFor } from '../src/core/scan/label';
 import { fillCandidate } from '../src/core/fill/strategies';
 
 const fixture = `
@@ -110,6 +111,40 @@ describe('scanDocument', () => {
     const selectWidget = fields.filter((f) => f.kind === 'select-widget');
     expect(selectWidget).toHaveLength(2);
     expect(fields.some((f) => f.label === '请选择')).toBe(false);
+  });
+});
+
+describe('label extraction', () => {
+  const labelOf = (html: string) => {
+    document.body.innerHTML = html;
+    return labelTextFor(document.querySelector('[data-t]')!, buildLabelIndex(document));
+  };
+
+  it('does not treat a framework-generated id as a label', () => {
+    document.body.innerHTML = `<form><div class="el-select"><input class="el-input__inner" id="el-id-51-33" /></div></form>`;
+    const [cand] = scanDocument(document).filter((c) => !c.skipped);
+    expect(cand.label).toBe('');
+  });
+
+  it('falls back to the text just before a control in card layouts', () => {
+    expect(labelOf(`<div class="fld"><span>客户等级</span><div class="el-select" data-t><input /></div></div>`)).toBe('客户等级');
+  });
+
+  it('skips a preceding block that holds another control', () => {
+    expect(
+      labelOf(`<div class="row"><div><input id="a" /></div><div class="el-select" data-t><input /></div></div>`),
+    ).toBe('');
+  });
+
+  it('prefers a specific placeholder but not a generic one', () => {
+    expect(labelOf(`<div class="fld"><span>开户行</span><input data-t placeholder="请选择" /></div>`)).toBe('开户行');
+    expect(labelOf(`<div class="fld"><span>筛选</span><input data-t placeholder="客户名称" /></div>`)).toBe('客户名称');
+  });
+
+  it('resolves aria-labelledby', () => {
+    expect(
+      labelOf(`<span id="lb">统一社会信用代码</span><div class="el-input" data-t><input /></div>`),
+    ).toBe('统一社会信用代码');
   });
 });
 

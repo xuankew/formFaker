@@ -205,7 +205,51 @@ export function validateTemplate(src: string, env: DslEnv): string | null {
   return null;
 }
 
-export const DSL_HINT =
-  '字符类 {d}数字 {u}大写 {l}小写 {a}字母 {n}大写字母+数字 {m}小写字母+数字 {x}十六进制 {c}汉字 {s}自定义字符集；' +
-  '数量 {d:8} 或 {d:3-6}；取值 {pool:词库id} {num:1-999} {num:1-500:2}；' +
-  '日期 {now} {now:YYYYMM} {now-30d:YYYYMMDD}；{{ }} 输出字面大括号。';
+// DSL 速查表。编辑器按分组渲染成对照表；DSL_HINT 保留同一份内容的纯文本版给自检工具打印。
+export const DSL_GROUPS: { label: string; items: { token: string; desc: string }[] }[] = [
+  {
+    label: '字符',
+    items: [
+      { token: '{d}', desc: '数字' },
+      { token: '{u}', desc: '大写字母' },
+      { token: '{l}', desc: '小写字母' },
+      { token: '{a}', desc: '字母' },
+      { token: '{n}', desc: '大写+数字' },
+      { token: '{m}', desc: '小写+数字' },
+      { token: '{x}', desc: '十六进制' },
+      { token: '{c}', desc: '汉字' },
+      { token: '{s}', desc: '自定义字符集' },
+    ],
+  },
+  {
+    label: '数量',
+    items: [
+      { token: '{d:8}', desc: '固定 8 位' },
+      { token: '{d:3-6}', desc: '3~6 位' },
+    ],
+  },
+  {
+    label: '取值',
+    items: [
+      { token: '{pool:词库id}', desc: '引用词库' },
+      { token: '{num:1-999}', desc: '整数' },
+      { token: '{num:1-500:2}', desc: '保留 2 位小数' },
+    ],
+  },
+  {
+    label: '日期',
+    items: [
+      { token: '{now}', desc: '今天' },
+      { token: '{now:YYYYMM}', desc: '按格式串输出' },
+      { token: '{now-30d:YYYYMMDD}', desc: '相对今天' },
+    ],
+  },
+  {
+    label: '转义',
+    items: [{ token: '{{ }}', desc: '输出字面大括号' }],
+  },
+];
+
+export const DSL_HINT = DSL_GROUPS.map(
+  (g) => `${g.label}：${g.items.map((i) => `${i.token} ${i.desc}`).join('，')}`,
+).join('\n');

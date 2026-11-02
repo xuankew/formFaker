@@ -4,7 +4,7 @@ import type { StoredRules } from './types';
 import { RULES_KEY, RULES_VERSION } from './types';
 
 // 0.1.x 的设置形状：7 个文本项加一个日期开关，存在 chrome.storage.sync 的 ff.settings.rules。
-// 规则中心上线后这些项分别落到词库、日期规则与名称标记里，读一次就迁走。
+// 规则中心上线后这些项分别落到词库、日期规则与数据标记里，读一次就迁走。
 export interface LegacyGenRules {
   dateFormat?: string;
   datetimeFormat?: string;

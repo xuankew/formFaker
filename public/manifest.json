@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FormFaker 表单造数助手",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "识别页面表单控件的类型与业务语义，自动生成合规随机测试数据并填充。",
   "permissions": ["scripting", "storage", "activeTab", "unlimitedStorage"],
   "host_permissions": ["<all_urls>"],

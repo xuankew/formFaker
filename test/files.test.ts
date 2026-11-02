@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { requiredImageSize, requiredMaxBytes } from '../src/core/fill/files';
+import {
+  DEFAULT_IMAGE,
+  imageTextPlacement,
+  requiredImageSize,
+  requiredMaxBytes,
+  resolveImageSize,
+} from '../src/core/fill/files';
 import { scanDocument } from '../src/core/scan';
 
 const sizeIn = (hint: string, inner = '<div class="el-upload"><input type="file" accept="image/*" /></div>') => {
@@ -50,6 +56,55 @@ describe('requiredMaxBytes', () => {
   it('returns null when the hint carries no byte limit', () => {
     expect(bytesIn('尺寸大小为：480*480px')).toBeNull();
     expect(bytesIn('')).toBeNull();
+  });
+});
+
+describe('resolveImageSize', () => {
+  it('keeps the field-declared size even when a custom default is set', () => {
+    expect(resolveImageSize({ width: 480, height: 480 }, { ...DEFAULT_IMAGE, width: 300, height: 300 })).toEqual({
+      width: 480,
+      height: 480,
+    });
+  });
+
+  it('falls back to 240×160 when nothing is configured', () => {
+    expect(resolveImageSize(null, DEFAULT_IMAGE)).toEqual({ width: 240, height: 160 });
+  });
+
+  it('uses the configured size and clamps out-of-range values', () => {
+    expect(resolveImageSize(null, { ...DEFAULT_IMAGE, width: 300, height: 200 })).toEqual({ width: 300, height: 200 });
+    expect(resolveImageSize(null, { ...DEFAULT_IMAGE, width: 0, height: 5000 })).toEqual({ width: 1, height: 2000 });
+  });
+});
+
+describe('imageTextPlacement', () => {
+  it('anchors text in corners and the center', () => {
+    expect(imageTextPlacement('top-left', 400, 200)).toEqual({
+      x: 16,
+      y: 16,
+      align: 'left',
+      baseline: 'top',
+      maxWidth: 368,
+    });
+    expect(imageTextPlacement('center', 400, 200)).toEqual({
+      x: 200,
+      y: 100,
+      align: 'center',
+      baseline: 'middle',
+      maxWidth: 368,
+    });
+    expect(imageTextPlacement('bottom-right', 400, 200)).toEqual({
+      x: 384,
+      y: 184,
+      align: 'right',
+      baseline: 'bottom',
+      maxWidth: 368,
+    });
+  });
+
+  it('centers edge positions on the other axis', () => {
+    expect(imageTextPlacement('top', 400, 200)).toMatchObject({ x: 200, y: 16, align: 'center', baseline: 'top' });
+    expect(imageTextPlacement('right', 400, 200)).toMatchObject({ x: 384, y: 100, align: 'right', baseline: 'middle' });
   });
 });
 

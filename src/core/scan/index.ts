@@ -43,8 +43,9 @@ export function scanDocument(doc: Document): FieldCandidate[] {
     out.push(cand);
   };
 
+  // 认不出标签就留空，交给界面显示占位；编一个「未识别标签」当标签只会占宽度。
   const labelFor = (root: Element, inner?: Element | null) =>
-    labelTextFor(root, labelIndex) || (inner ? labelTextFor(inner, labelIndex) : '') || '(未识别标签)';
+    labelTextFor(root, labelIndex) || (inner ? labelTextFor(inner, labelIndex) : '') || '';
 
   // ---- widget roots ----
   const widgetRoots = Array.from(doc.querySelectorAll(WIDGET_SELECTOR)).filter(

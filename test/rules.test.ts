@@ -200,7 +200,7 @@ describe('用户规则与内置规则同表', () => {
     expect(buildCatalog({ ...emptyStored(), pools: { myOwn: ['甲'] } }).pools.myOwn).toEqual(['甲']);
   });
 
-  it('名称标记原样透传', () => {
+  it('数据标记原样透传', () => {
     const cat = buildCatalog({ ...emptyStored(), marks: { prefix: 'qa-', suffix: '' } });
     expect(cat.marks).toEqual({ prefix: 'qa-', suffix: '' });
     expect(buildCatalog(null).marks).toEqual({ prefix: '', suffix: '' });
@@ -268,7 +268,7 @@ describe('存储与旧设置迁移', () => {
     expect(migrateLegacy(undefined)).toEqual(emptyStored());
   });
 
-  it('旧的七项设置分别落到词库、日期规则与名称标记', () => {
+  it('旧的七项设置分别落到词库、日期规则与数据标记', () => {
     const out = migrateLegacy({
       dateFormat: 'YYYY/MM/DD',
       datetimeFormat: 'YYYY/MM/DD HH:mm',

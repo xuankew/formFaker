@@ -1,4 +1,4 @@
-import type { ContentRequest, ContentResponse, FieldDTO, FillResult, ScanResult, StoredRules } from '../shared/types';
+import type { ContentRequest, ContentResponse, FieldDTO, FillResult, ImageStyle, ScanResult, StoredRules } from '../shared/types';
 import type { Catalog } from '../core/rules/types';
 import { buildCatalog } from '../core/rules/catalog';
 import { scanDocument, scanRevealed, type FieldCandidate } from '../core/scan';
@@ -8,6 +8,8 @@ import { applyRule, currentOptionText, resolveCredentialLink, resolveGeoLink } f
 import { coordForText } from '../core/generators/geo';
 import { generate } from '../core/generators';
 import { clearCandidate, fillCandidate, hasExistingValue, restoreSnapshot, takeSnapshot, type Snapshot } from '../core/fill/strategies';
+import { sleep } from '../core/fill/dom';
+import { readFieldError } from '../core/fill/validate';
 import { claimBootstrap, type StampHost } from './guard';
 
 interface RuntimeField {
@@ -143,7 +145,12 @@ function bootstrap(): void {
   // Values written by a fill can mount controls that did not exist at scan time
   // (conditional sections, or blocks that only render once scrolled into view).
   // Register and fill whatever newly appeared; returns how many were found.
-  const fillRevealed = async (overwrite: boolean, results: FillResult[]): Promise<number> => {
+  const fillRevealed = async (
+    overwrite: boolean,
+    image: ImageStyle | undefined,
+    results: FillResult[],
+    attempted: Set<string>,
+  ): Promise<number> => {
     const revealed = scanRevealed(knownTargets());
     for (const cand of revealed) {
       const dto = register(cand);
@@ -153,7 +160,8 @@ function bootstrap(): void {
       }
       snapshots.push(...takeSnapshot(cand.targets));
       try {
-        await fillCandidate(cand, dto.value);
+        await fillCandidate(cand, dto.value, image);
+        attempted.add(dto.id);
         results.push({ id: dto.id, ok: true });
       } catch (err) {
         results.push({ id: dto.id, ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -162,9 +170,14 @@ function bootstrap(): void {
     return revealed.length;
   };
 
-  const handleFill = async (cmds: { id: string; value: string }[], overwrite: boolean): Promise<FillResult[]> => {
+  const handleFill = async (
+    cmds: { id: string; value: string }[],
+    overwrite: boolean,
+    image?: ImageStyle,
+  ): Promise<FillResult[]> => {
     snapshots = [];
     const results: FillResult[] = [];
+    const attempted = new Set<string>();
     let sinceYield = 0;
     for (const cmd of cmds) {
       const rt = fields.get(cmd.id);
@@ -178,7 +191,8 @@ function bootstrap(): void {
       }
       snapshots.push(...takeSnapshot(rt.cand.targets));
       try {
-        await fillCandidate(rt.cand, cmd.value);
+        await fillCandidate(rt.cand, cmd.value, image);
+        attempted.add(rt.dto.id);
         results.push({ id: rt.dto.id, ok: true });
       } catch (err) {
         results.push({ id: rt.dto.id, ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -192,9 +206,22 @@ function bootstrap(): void {
     // picks up blocks that only mount once they come into view.
     for (let round = 0; round < 2; round++) {
       await new Promise((r) => requestAnimationFrame(r));
-      if (!(await fillRevealed(overwrite, results))) break;
+      if (!(await fillRevealed(overwrite, image, results, attempted))) break;
     }
-    await walkScroll(() => fillRevealed(overwrite, results), { maxSteps: 15 });
+    await walkScroll(() => fillRevealed(overwrite, image, results, attempted), { maxSteps: 15 });
+
+    // 回读页面自己的校验提示。只查真正写过值的字段——没动过的字段上的红字
+    // 是页面原有状态，不该记在这次填充头上。给组件库留出异步校验的时间。
+    if (attempted.size) {
+      await sleep(400);
+      for (const r of results) {
+        if (!r.ok || !attempted.has(r.id)) continue;
+        const rt = fields.get(r.id);
+        if (!rt) continue;
+        const pageError = readFieldError(rt.cand.root);
+        if (pageError) r.pageError = pageError;
+      }
+    }
     return results;
   };
 
@@ -233,7 +260,7 @@ function bootstrap(): void {
           reply({ value: handleRegen(msg.id, msg.rules) });
           break;
         case 'fill':
-          handleFill(msg.cmds, msg.overwrite).then(reply, fail);
+          handleFill(msg.cmds, msg.overwrite, msg.image).then(reply, fail);
           return true;
         case 'clear':
           handleClear().then(reply, fail);

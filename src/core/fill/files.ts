@@ -3,6 +3,74 @@ export interface ImageSize {
   height: number;
 }
 
+export type ImageTextPos =
+  | 'top-left'
+  | 'top'
+  | 'top-right'
+  | 'left'
+  | 'center'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom'
+  | 'bottom-right';
+
+// 合成上传图的样式，用户可在设置页改；尺寸只在字段没声明尺寸时生效。
+export interface ImageStyle {
+  text: string;
+  pos: ImageTextPos;
+  width: number | null;
+  height: number | null;
+}
+
+export const DEFAULT_IMAGE: ImageStyle = { text: 'FormFaker', pos: 'center', width: null, height: null };
+
+export interface ImageTextPlacement {
+  x: number;
+  y: number;
+  align: CanvasTextAlign;
+  baseline: CanvasTextBaseline;
+  maxWidth: number;
+}
+
+const PAD_RATIO = 0.08;
+const FONT_RATIO = 0.09;
+
+export function imageTextPlacement(pos: ImageTextPos, width: number, height: number): ImageTextPlacement {
+  const pad = Math.max(4, Math.round(Math.min(width, height) * PAD_RATIO));
+  return {
+    x: pos.includes('left') ? pad : pos.includes('right') ? width - pad : width / 2,
+    y: pos.includes('top') ? pad : pos.includes('bottom') ? height - pad : height / 2,
+    align: pos.includes('left') ? 'left' : pos.includes('right') ? 'right' : 'center',
+    baseline: pos.includes('top') ? 'top' : pos.includes('bottom') ? 'bottom' : 'middle',
+    maxWidth: Math.max(1, width - pad * 2),
+  };
+}
+
+export function resolveImageSize(hint: ImageSize | null | undefined, style: ImageStyle): ImageSize {
+  if (hint) return hint;
+  const dim = (v: number | null, fallback: number) =>
+    v !== null && Number.isFinite(v) ? Math.min(MAX_DIM, Math.max(1, Math.round(v))) : fallback;
+  return { width: dim(style.width, 240), height: dim(style.height, 160) };
+}
+
+export function paintImage(
+  ctx: CanvasRenderingContext2D,
+  size: ImageSize,
+  style: ImageStyle,
+  background: string,
+): void {
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, size.width, size.height);
+  const text = style.text.trim();
+  if (!text) return;
+  const place = imageTextPlacement(style.pos, size.width, size.height);
+  ctx.fillStyle = '#333';
+  ctx.font = `${Math.max(10, Math.round(Math.min(size.width, size.height) * FONT_RATIO))}px sans-serif`;
+  ctx.textAlign = place.align;
+  ctx.textBaseline = place.baseline;
+  ctx.fillText(text, place.x, place.y, place.maxWidth);
+}
+
 const SIZE_RE = /(\d{2,5})\s*[*×xX]\s*(\d{2,5})\s*(?:px|像素)/i;
 const SIZE_AFTER_HINT_RE = /尺寸[^0-9]{0,16}(\d{2,5})\s*[*×xX]\s*(\d{2,5})/;
 const MAX_DIM = 2000;
@@ -45,10 +113,11 @@ export async function makeTestFile(
   kind: 'upload-image' | 'upload-file',
   accept: string,
   size?: ImageSize | null,
+  style: ImageStyle = DEFAULT_IMAGE,
 ): Promise<File> {
   const stamp = Math.floor(Math.random() * 10000);
   if (kind === 'upload-image' || accept.includes('image')) {
-    const blob = await makePng(size);
+    const blob = await makePng(size, style);
     const suffix = size ? `-${size.width}x${size.height}` : '';
     return new File([blob], `test-${stamp}${suffix}.png`, { type: 'image/png' });
   }
@@ -56,18 +125,15 @@ export async function makeTestFile(
   return new File([bytes], `test-${stamp}.pdf`, { type: 'application/pdf' });
 }
 
-function makePng(size?: ImageSize | null): Promise<Blob> {
+function makePng(hint: ImageSize | null | undefined, style: ImageStyle): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    const size = resolveImageSize(hint, style);
     const canvas = document.createElement('canvas');
-    canvas.width = size?.width ?? 240;
-    canvas.height = size?.height ?? 160;
+    canvas.width = size.width;
+    canvas.height = size.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return reject(new Error('canvas unsupported'));
-    ctx.fillStyle = `hsl(${Math.floor(Math.random() * 360)}, 60%, 70%)`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#333';
-    ctx.font = '20px sans-serif';
-    ctx.fillText('FormFaker', 60, 90);
+    paintImage(ctx, size, style, `hsl(${Math.floor(Math.random() * 360)}, 60%, 70%)`);
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('toBlob failed'))), 'image/png');
   });
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FieldDTO, FillResult, ScanResult, Settings, StoredRules } from '../shared/types';
 import { DEFAULT_SETTINGS, RANDOM_OPTION_PLACEHOLDER } from '../shared/types';
-import { GENERIC_RULE_ID, RULES_KEY } from '../core/rules/types';
+import { GENERIC_RULE_ID, ENUM_RULE_ID, RULES_KEY } from '../core/rules/types';
 import { emptyStored, loadRules } from '../core/rules/store';
 import { loadSettings, saveSettings } from '../shared/storage';
 import { activeTabId, reinject, sendToContent, unreachableHint } from '../shared/messaging';
@@ -32,6 +32,7 @@ export default function App() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [included, setIncluded] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [warns, setWarns] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const rulesRef = useRef<StoredRules>(emptyStored());
   // 上次识别时用的规则与覆盖开关。从设置页回来时靠它判断要不要重扫。
@@ -43,6 +44,14 @@ export default function App() {
   const [showSkipped, setShowSkipped] = useState(false);
   const skippedRef = useRef<HTMLDetailsElement>(null);
   const [view, setView] = useState<'fields' | 'settings' | 'rules'>('fields');
+
+  // 勾选状态 = 会参与「填充全部」的字段。全选框要能表达「部分选中」，用 indeterminate。
+  const includedCount = fields.filter((f) => included[f.id] !== false).length;
+  const allIncluded = fields.length > 0 && includedCount === fields.length;
+  const selAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selAllRef.current) selAllRef.current.indeterminate = includedCount > 0 && includedCount < fields.length;
+  }, [includedCount, fields.length]);
 
   const request = useCallback(async <T,>(msg: Parameters<typeof sendToContent>[1]): Promise<T> => {
     let id = tabId;
@@ -70,6 +79,7 @@ export default function App() {
       setValues(Object.fromEntries(result.fields.map((f) => [f.id, f.value])));
       setIncluded(Object.fromEntries(result.fields.map((f) => [f.id, true])));
       setErrors({});
+      setWarns({});
       setCanUndo(false);
       setTone('');
       setStatus(`识别到 ${result.fields.length} 个可填充字段`);
@@ -118,16 +128,26 @@ export default function App() {
 
   const fill = async (cmds: { id: string; value: string }[]) => {
     setBusy(true);
+    setWarns({});
     setStatus(`填充中（${cmds.length}）…`);
     try {
-      const results = await request<FillResult[]>({ type: 'fill', cmds, overwrite: settings.overwrite });
+      const results = await request<FillResult[]>({ type: 'fill', cmds, overwrite: settings.overwrite, image: settings.image });
       const errs: Record<string, string> = {};
-      for (const r of results) if (!r.ok && r.error) errs[r.id] = r.error;
+      const pageErrs: Record<string, string> = {};
+      for (const r of results) {
+        if (!r.ok && r.error) errs[r.id] = r.error;
+        else if (r.ok && r.pageError) pageErrs[r.id] = r.pageError;
+      }
       setErrors(errs);
+      setWarns(pageErrs);
       const failed = Object.keys(errs).length;
+      const warned = Object.keys(pageErrs).length;
       setCanUndo(true);
-      setTone(failed ? 'err' : '');
-      setStatus(failed ? `填充完成，${failed} 个失败（见标红）` : '填充完成');
+      setTone(failed ? 'err' : warned ? 'warn' : '');
+      const parts: string[] = [];
+      if (failed) parts.push(`${failed} 个填充失败（见标红）`);
+      if (warned) parts.push(`${warned} 个页面校验未通过（见标黄）`);
+      setStatus(parts.length ? `填充完成：${parts.join('，')}` : '填充完成');
     } catch (err) {
       setTone('err');
       setStatus(err instanceof Error ? err.message : String(err));
@@ -139,10 +159,16 @@ export default function App() {
   const fillAll = () => fill(fields.filter((f) => included[f.id]).map((f) => ({ id: f.id, value: values[f.id] ?? '' })));
   const fillOne = (f: FieldDTO) => fill([{ id: f.id, value: values[f.id] ?? '' }]);
 
+  const toggleAll = () => {
+    const next = !allIncluded;
+    setIncluded(Object.fromEntries(fields.map((f) => [f.id, next])));
+  };
+
   const undo = async () => {
     try {
       await request({ type: 'undo' });
       setCanUndo(false);
+      setWarns({});
       setTone('');
       setStatus('已撤销最近一次填充');
     } catch (err) {
@@ -156,6 +182,7 @@ export default function App() {
     setStatus('清除中…');
     try {
       const r = await request<{ cleared: number; failed: number }>({ type: 'clear' });
+      setWarns({});
       setTone(r.failed ? 'warn' : '');
       setStatus(`已清除 ${r.cleared} 个字段${r.failed ? `，${r.failed} 个无法清空（控件不支持）` : ''}`);
     } catch (err) {
@@ -203,8 +230,6 @@ export default function App() {
         <span className="spacer" />
         <button className="ghost" onClick={() => void scan()} disabled={busy}>重新识别</button>
         <button className="primary" onClick={() => void fillAll()} disabled={busy || !fields.length}>填充全部</button>
-        <button className="danger" onClick={() => void clearAll()} disabled={busy || !fields.length}>清除全部</button>
-        <button className="ghost" onClick={() => void undo()} disabled={busy || !canUndo}>撤销</button>
       </header>
       <div className="toolbar">
         <label className="overwrite">
@@ -219,22 +244,37 @@ export default function App() {
         <span className={`status${tone ? ` ${tone}` : ''}`}>{status}</span>
       </div>
       <main>
-        {fields.map((f) => (
-          <section key={f.id} className={`row${errors[f.id] ? ' error' : ''}`}>
+        {fields.length > 0 && (
+          <div className="listhead">
+            <label className="selall">
+              <input ref={selAllRef} type="checkbox" checked={allIncluded} onChange={toggleAll} />
+              全选
+            </label>
+            <span className="spacer" />
+            <span className="selsum">已选 <b>{includedCount}</b>/{fields.length}</span>
+          </div>
+        )}
+        {fields.map((f, i) => (
+          <section key={f.id} className={`row${errors[f.id] ? ' error' : warns[f.id] ? ' warn' : ''}`}>
             <div className="line1">
               <input
                 type="checkbox"
                 checked={included[f.id] ?? true}
                 onChange={(e) => setIncluded((s) => ({ ...s, [f.id]: e.target.checked }))}
               />
-              <span className="label" title={f.label}>{f.label}</span>
-              <span className={`chip kind-${KIND_CATEGORIES[f.kind] ?? 'input'}`}>{KIND_LABELS[f.kind] ?? f.kind}</span>
-              <span
-                className={`chip semantic${f.ruleCustom ? ' custom' : f.semantic === GENERIC_RULE_ID ? ' generic' : ''}`}
-                title={f.ruleCustom ? '自定义规则' : `内置规则 ${f.semantic}`}
-              >
-                {f.ruleName}
+              <span className="idx">{i + 1}</span>
+              <span className={`label${f.label ? '' : ' unnamed'}`} title={f.label}>
+                {f.label || '未命名'}
               </span>
+              <span className={`chip kind-${KIND_CATEGORIES[f.kind] ?? 'input'}`}>{KIND_LABELS[f.kind] ?? f.kind}</span>
+              {f.semantic !== ENUM_RULE_ID && (
+                <span
+                  className={`chip semantic${f.ruleCustom ? ' custom' : f.semantic === GENERIC_RULE_ID ? ' generic' : ''}`}
+                  title={f.ruleCustom ? '自定义规则' : `内置规则 ${f.semantic}`}
+                >
+                  {f.ruleName}
+                </span>
+              )}
               <span className="spacer" />
               <span className="actions">
                 <button className="icon" title="换一个" onClick={() => void regen(f.id)}>↻</button>
@@ -249,6 +289,7 @@ export default function App() {
               onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
             />
             {errors[f.id] && <div className="err">{errors[f.id]}</div>}
+            {warns[f.id] && <div className="pgerr">页面校验：{warns[f.id]}</div>}
           </section>
         ))}
         {!fields.length && !busy && <div className="empty">未识别到可填充字段。若页面刚加载或发生路由跳转，请点「重新识别」。</div>}
@@ -256,13 +297,18 @@ export default function App() {
           <details ref={skippedRef} open={showSkipped} onToggle={(e) => setShowSkipped((e.target as HTMLDetailsElement).open)}>
             <summary>跳过的字段（{skipped.length}）</summary>
             {skipped.map((f) => (
-              <div key={f.id} className="skipped-row">{f.label} — {f.reason}</div>
+              <div key={f.id} className="skipped-row">{f.label || '未命名'} — {f.reason}</div>
             ))}
           </details>
         )}
       </main>
       <footer>
-        <button onClick={() => setView('settings')}>⚙ 设置</button>
+        <button className="settings" onClick={() => setView('settings')} title="打开设置">
+          <span className="gear" aria-hidden="true">⚙</span>设置
+        </button>
+        <span className="spacer" />
+        <button className="ghost" onClick={() => void undo()} disabled={busy || !canUndo}>撤销</button>
+        <button className="danger" onClick={() => void clearAll()} disabled={busy || !fields.length}>清除全部</button>
       </footer>
     </div>
   );

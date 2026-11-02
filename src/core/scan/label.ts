@@ -26,6 +26,45 @@ export function buildLabelIndex(doc: Document): Map<string, string> {
 
 const CELL_SELECTOR = 'td, th, [role="gridcell"], [role="cell"]';
 
+// Element Plus / Ant Design 在控件没有显式 id 时会自动生成 el-id-51-33、rc_select_7
+// 这类 id。拿它当标签，弹窗里就只剩「el id 51 33」这种噪声，不如留空由界面处理。
+const GENERATED_ID_RE = /^(el-id-|el_|rc_select_|rc_|ant-|antd-|react-select-|mui-|radix-|headlessui-)/i;
+
+export function isGeneratedId(value: string | null | undefined): boolean {
+  return !!value && GENERATED_ID_RE.test(value);
+}
+
+// 占位提示只说明「怎么操作」，不如旁边那行真标签有信息量，所以排在它后面。
+const GENERIC_HINT_RE = /^(请选择|请设置|请填写|请输入|搜索|查询|筛选|select|input|enter|search)/i;
+
+const CONTROL_SEL = 'input, select, textarea, button, [contenteditable="true"]';
+
+function labelledBy(el: Element): string {
+  const ids = (el.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean);
+  for (const id of ids) {
+    const text = cleanLabel(el.ownerDocument.getElementById(id)?.textContent);
+    if (text) return text;
+  }
+  return '';
+}
+
+// 自定义卡片布局里标签往往不是 <label>，只是控件前面那个兄弟节点
+// （<div class="fld"><span>状态</span><div class="el-switch"/></div>），
+// 没有 label / form-item 可依时只能就近往上找。
+function nearbyText(el: Element): string {
+  let cur: Element | null = el;
+  for (let depth = 0; depth < 3 && cur; depth++, cur = cur.parentElement) {
+    for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      if (sib.querySelector(CONTROL_SEL)) continue; // 那是另一个字段，不是它的标签
+      const text = cleanLabel(sib.textContent);
+      if (!text) continue;
+      if (/^[\d\s.,:：\-—/]+$/.test(text)) continue; // 序号、分隔符之类的装饰
+      return text.length <= 24 ? text : '';
+    }
+  }
+  return '';
+}
+
 function expandedIndex(cell: Element): number {
   const row = cell.parentElement;
   if (!row) return -1;
@@ -97,13 +136,19 @@ export function labelTextFor(el: Element, index: Map<string, string>): string {
     const text = cleanLabel(label?.textContent);
     if (text) return text;
   }
+  const labelled = labelledBy(el);
+  if (labelled) return labelled;
   const header = columnHeaderFor(el);
   if (header) return header;
   const aria = el.getAttribute('aria-label') || el.getAttribute('title');
   if (aria) return cleanLabel(aria);
-  const placeholder = el.getAttribute('placeholder');
-  if (placeholder) return cleanLabel(placeholder);
-  const name = el.getAttribute('name') || el.id;
-  if (name) return beautifyAttr(name);
+  const placeholder = cleanLabel(el.getAttribute('placeholder'));
+  if (placeholder && !GENERIC_HINT_RE.test(placeholder)) return placeholder;
+  const near = nearbyText(el);
+  if (near) return near;
+  if (placeholder) return placeholder;
+  const name = el.getAttribute('name');
+  if (name && !isGeneratedId(name)) return beautifyAttr(name);
+  if (el.id && !isGeneratedId(el.id)) return beautifyAttr(el.id);
   return '';
 }

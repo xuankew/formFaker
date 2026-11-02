@@ -3,7 +3,7 @@ import { FILL_SELECTORS } from '../scan/selectors';
 import { RANDOM_OPTION_PLACEHOLDER, type PoolEntry } from '../../shared/types';
 import { blur, ensureInView, isVisibleEl, pressEnter, realClick, restoreSnapshot, setNativeValue, sleep, takeSnapshot, visibleAll, waitUntil, type Snapshot } from './dom';
 import { fillLookup } from './lookup';
-import { makeTestFile, requiredImageSize, requiredMaxBytes } from './files';
+import { makeTestFile, requiredImageSize, requiredMaxBytes, type ImageStyle } from './files';
 import { entryMeetsHints, loadFilePool, pickPoolFile, poolEntryToFile } from './filepool';
 
 const rand = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -162,7 +162,7 @@ async function rejectIfPageRefused(root: Element, beforeMsgs: Set<string>): Prom
   }
 }
 
-async function fillUpload(cand: FieldCandidate): Promise<void> {
+async function fillUpload(cand: FieldCandidate, image?: ImageStyle): Promise<void> {
   const input = cand.targets[0] as HTMLInputElement;
   const kind = cand.kind as 'upload-image' | 'upload-file';
   const accept = cand.accept ?? '';
@@ -174,7 +174,7 @@ async function fillUpload(cand: FieldCandidate): Promise<void> {
   const eligible: PoolEntry[] = [];
   for (const e of pool) if (await entryMeetsHints(e, need, maxBytes)) eligible.push(e);
   const entry = pickPoolFile(eligible, kind, accept);
-  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept, need);
+  const file = entry ? poolEntryToFile(entry) : await makeTestFile(kind, accept, need, image);
   const beforeMsgs = new Set(refuseMessages());
   const dt = new DataTransfer();
   dt.items.add(file);
@@ -183,7 +183,7 @@ async function fillUpload(cand: FieldCandidate): Promise<void> {
   await rejectIfPageRefused(cand.root, beforeMsgs);
 }
 
-export async function fillCandidate(cand: FieldCandidate, value: string): Promise<void> {
+export async function fillCandidate(cand: FieldCandidate, value: string, image?: ImageStyle): Promise<void> {
   const [primary] = cand.targets;
   ensureInView(cand.root);
   switch (cand.kind) {
@@ -274,7 +274,7 @@ export async function fillCandidate(cand: FieldCandidate, value: string): Promis
     }
     case 'upload-image':
     case 'upload-file':
-      await fillUpload(cand);
+      await fillUpload(cand, image);
       return;
     case 'richtext':
       primary.innerHTML = `<p>${value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`;

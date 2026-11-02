@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { generate } from '../core/generators';
 import { BUILTIN_POOLS, buildCatalog } from '../core/rules/catalog';
-import { DSL_HINT, validateTemplate } from '../core/rules/dsl';
+import { DSL_GROUPS, validateTemplate } from '../core/rules/dsl';
 import { exportRules, importRules, summarizeImport, type ImportMode } from '../core/rules/porting';
 import { emptyStored, loadRules, parseKeywords, parseLines, saveRules } from '../core/rules/store';
 import {
@@ -30,6 +30,18 @@ const DIRECTIONS: { value: DateDirection; label: string }[] = [
 
 function blankRule(): FieldRule {
   return { id: newRuleId(), name: '', keywords: [], group: 'text', gen: { type: 'template', template: '' }, builtin: false };
+}
+
+// 逐项比编辑区里能改的字段；直接比整个对象不行，键顺序会随展开写法变化。
+function sameRule(a: FieldRule, b: FieldRule): boolean {
+  return (
+    a.name === b.name &&
+    a.group === b.group &&
+    a.keywords.join('\u0001') === b.keywords.join('\u0001') &&
+    JSON.stringify(a.gen) === JSON.stringify(b.gen) &&
+    !!a.mark === !!b.mark &&
+    !!a.disabled === !!b.disabled
+  );
 }
 
 function defaultGen(type: GenSpec['type']): GenSpec {
@@ -80,7 +92,21 @@ function GenParams({
               onChange={(e) => onChange({ ...gen, template: e.target.value })}
             />
           </label>
-          <p className="dsl">{DSL_HINT}</p>
+          <div className="dsl">
+            {DSL_GROUPS.map((g) => (
+              <div className="drow" key={g.label}>
+                <span className="dlabel">{g.label}</span>
+                <span className="dtokens">
+                  {g.items.map((it) => (
+                    <span className="ditem" key={it.token}>
+                      <code>{it.token}</code>
+                      {it.desc}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
           <label className="field">
             <span>
               自定义字符集<span className="hint">只有 {'{s}'} 会用到</span>
@@ -189,7 +215,7 @@ export default function RulesPanel() {
   const [tab, setTab] = useState<'rules' | 'pools'>('rules');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
-  const [folded, setFolded] = useState<RuleGroup[]>([]);
+  const [folded, setFolded] = useState<RuleGroup[]>([...GROUP_ORDER]);
   const [newPoolId, setNewPoolId] = useState('');
   const [notice, setNotice] = useState('');
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -253,6 +279,12 @@ export default function RulesPanel() {
     const e = check(cur);
     setError(e);
     if (e) return false;
+    // 只是点开看一眼、什么都没改就失焦，不该给内置规则留下一条「已改」覆盖记录。
+    const orig = catalog.rules.find((r) => r.id === cur.id);
+    if (orig && sameRule(orig, cur)) {
+      setError('');
+      return true;
+    }
     commit({ ...stored, rules: [...stored.rules.filter((r) => r.id !== cur.id), cur] });
     return true;
   };
@@ -287,6 +319,8 @@ export default function RulesPanel() {
   }, [catalog, query]);
 
   const shown = GROUP_ORDER.reduce((n, g) => n + (groups.get(g)?.length ?? 0), 0);
+  // 搜索时强制展开，否则命中的规则会被折叠在标题下面，看起来像没搜到。
+  const searching = query.trim().length > 0;
 
   const poolRows = useMemo(() => {
     const customs = Object.keys(stored.pools)
@@ -399,10 +433,17 @@ export default function RulesPanel() {
         </label>
       </div>
       <GenParams gen={draft.gen} pools={catalog.pools} onChange={(g) => setDraft({ ...draft, gen: g })} />
-      <label className="rowline">
-        <input type="checkbox" checked={!!draft.mark} onChange={(e) => setDraft({ ...draft, mark: e.target.checked })} />
-        贴名称标记<span className="hint">把「名称标记」里的前后缀加到值两端</span>
-      </label>
+      {draft.gen.type !== 'option' && (
+        <label className="rowline">
+          <input type="checkbox" checked={!!draft.mark} onChange={(e) => setDraft({ ...draft, mark: e.target.checked })} />
+          贴数据标记
+          <span className="hint">
+            {catalog.marks.prefix.trim() || catalog.marks.suffix.trim()
+              ? '把设置页「数据标记」的前后缀加到值两端'
+              : '设置页还没填前后缀，勾了也不会变'}
+          </span>
+        </label>
+      )}
       <div className="preview">
         <span className="k">示例</span>
         {samples(draft).map((s, i) => (
@@ -442,7 +483,7 @@ export default function RulesPanel() {
         <div className="rowline">
           <span className="portlabel">规则文件</span>
           <span className="spacer" />
-          <button className="ghost" onClick={doExport} title="把规则改动、词库与名称标记导出成一个 JSON 文件">
+          <button className="ghost" onClick={doExport} title="把规则改动、词库与数据标记导出成一个 JSON 文件">
             导出
           </button>
           <button className="ghost" onClick={() => pickImport('merge')} title="保留本地规则，文件里同 id 的覆盖过来">
@@ -493,7 +534,7 @@ export default function RulesPanel() {
                 新建规则
               </button>
             </div>
-            <p className="lead">自定义规则整体优先于内置；同层里关键词越长越先匹配。字段命中的规则名会显示在弹窗的标签上。</p>
+            <p className="lead">自定义规则整体优先于内置；同层里关键词越长越先匹配，命中的规则名会显示在弹窗标签上。点分组标题展开，搜索时自动展开命中分组。</p>
           </section>
 
           {editor}
@@ -501,12 +542,16 @@ export default function RulesPanel() {
           {GROUP_ORDER.map((g) => {
             const list = groups.get(g) ?? [];
             if (!list.length) return null;
-            const isFolded = folded.includes(g);
+            const isFolded = !searching && folded.includes(g);
             return (
               <section className="card" key={g}>
                 <h3
                   className="grouphead"
-                  onClick={() => setFolded(isFolded ? folded.filter((x) => x !== g) : [...folded, g])}
+                  aria-expanded={!isFolded}
+                  onClick={() => {
+                    if (searching) return;
+                    setFolded(isFolded ? folded.filter((x) => x !== g) : [...folded, g]);
+                  }}
                 >
                   <span className="caret">{isFolded ? '▸' : '▾'}</span>
                   {GROUP_LABELS[g]}
@@ -532,6 +577,11 @@ export default function RulesPanel() {
                             )
                           ) : (
                             <span className="tag custom">自定义</span>
+                          )}
+                          {r.mark && (
+                            <span className="tag marked" title="生成的值两端会加数据标记">
+                              带标记
+                            </span>
                           )}
                           <span className="spacer" />
                           <button
