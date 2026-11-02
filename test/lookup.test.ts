@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { scanDocument } from '../src/core/scan';
 import { generate } from '../src/core/generators';
+import { defaultCatalog } from '../src/core/rules/catalog';
 import { fillCandidate } from '../src/core/fill/strategies';
 import { RANDOM_OPTION_PLACEHOLDER } from '../src/shared/types';
 import type { FieldCandidate } from '../src/core/scan';
@@ -54,7 +55,7 @@ describe('lookup scan', () => {
   });
 
   it('generates the random-pick placeholder since the value comes from a record', () => {
-    const value = generate({ kind: 'lookup', semantic: 'enum', label: '清算会员号' });
+    const value = generate({ kind: 'lookup', ruleId: 'enum', label: '客户编号', catalog: defaultCatalog() });
     expect(value).toBe(RANDOM_OPTION_PLACEHOLDER);
   });
 });
@@ -186,7 +187,7 @@ describe('lookup fill', () => {
   });
 });
 
-// 真实形态（SRM「查询税收编码」）：没有 footer、没有单选列，提交靠每行 操作 列的「选择」链接。
+// 真实形态（企业系统「查询税收编码」）：没有 footer、没有单选列，提交靠每行 操作 列的「选择」链接。
 const taxDialog = (actionHtml: string) => `
   <div class="el-overlay"><div class="el-dialog" style="display:none">
     <div class="el-dialog__header"><span class="el-dialog__title">选择税收编码</span><button class="el-dialog__headerbtn">×</button></div>
@@ -366,7 +367,7 @@ describe('lookup fill: 随机选择', () => {
   });
 });
 
-// 真实形态（SRM「选择跟进组织」）：Element Plus el-tree，父节点是组织组、叶子才是公司。
+// 真实形态（企业系统「选择跟进组织」）：Element Plus el-tree，父节点是组织组、叶子才是公司。
 // EP 默认 render-after-expand，折叠节点的子树根本不在 DOM 里。
 const treeNode = (label: string, leaf: boolean, children = '') => `
   <div class="el-tree-node is-focusable" role="treeitem" aria-expanded="${children ? 'true' : 'false'}">
@@ -377,8 +378,8 @@ const treeNode = (label: string, leaf: boolean, children = '') => `
     ${children ? `<div class="el-tree-node__children" role="group">${children}</div>` : ''}
   </div>`;
 
-const ORG_BRANCH = 'MXBCVN 蜜雪冰城-越南';
-const ORG_LEAVES = ['HW050001 雪王环球有限公司', 'MXBCML 雪王马来西亚', 'GYS202609190001 郑州供应商'];
+const ORG_BRANCH = 'VN01 越南大区';
+const ORG_LEAVES = ['HW050001 星海环球有限公司', 'MY0201 南洋贸易有限公司', 'GYS202609190001 中原供应商'];
 const ORG_TREE = `
   <div class="el-tree" role="tree">
     ${treeNode(ORG_BRANCH, false, treeNode(ORG_LEAVES[0], true) + treeNode(ORG_LEAVES[1], true))}
@@ -437,10 +438,10 @@ describe('lookup fill: 树形弹窗', () => {
 
   it('falls back to a branch when the tree holds no leaf at all', async () => {
     const { input, cand } = mountTree(
-      `<div class="el-tree" role="tree">${treeNode(ORG_BRANCH, false)}${treeNode('ML 马来西亚', false)}</div>`,
+      `<div class="el-tree" role="tree">${treeNode(ORG_BRANCH, false)}${treeNode('MY02 马来分部', false)}</div>`,
     );
     await fillCandidate(cand, RANDOM_OPTION_PLACEHOLDER);
-    expect([ORG_BRANCH, 'ML 马来西亚']).toContain(input.value);
+    expect([ORG_BRANCH, 'MY02 马来分部']).toContain(input.value);
   });
 
   it('reads only the chosen node own line, not its whole subtree', async () => {

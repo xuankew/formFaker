@@ -1,9 +1,10 @@
-import type { ContentRequest, ContentResponse, FieldDTO, FillResult, GenRules, ScanResult } from '../shared/types';
-import { DEFAULT_GEN_RULES } from '../shared/types';
+import type { ContentRequest, ContentResponse, FieldDTO, FillResult, ScanResult, StoredRules } from '../shared/types';
+import type { Catalog } from '../core/rules/types';
+import { buildCatalog } from '../core/rules/catalog';
 import { scanDocument, scanRevealed, type FieldCandidate } from '../core/scan';
 import { walkScroll } from '../core/scan/scroll';
-import { inferSemantic, credentialSemantic } from '../core/semantics/infer';
-import { currentOptionText, resolveCredentialLink, resolveGeoLink } from '../core/semantics/link';
+import { inferRule, credentialSemantic } from '../core/semantics/infer';
+import { applyRule, currentOptionText, resolveCredentialLink, resolveGeoLink } from '../core/semantics/link';
 import { coordForText } from '../core/generators/geo';
 import { generate } from '../core/generators';
 import { clearCandidate, fillCandidate, hasExistingValue, restoreSnapshot, takeSnapshot, type Snapshot } from '../core/fill/strategies';
@@ -14,25 +15,43 @@ interface RuntimeField {
   dto: FieldDTO;
 }
 
+// 规则命中的依据：可见标签常常是「联系电话」这类泛词，真正的线索藏在 name/id/placeholder 里。
+function haystackOf(cand: FieldCandidate): string {
+  const root = cand.root;
+  return [
+    cand.label,
+    root.getAttribute('name') ?? '',
+    root.id,
+    root.getAttribute('placeholder') ?? '',
+  ].join(' ');
+}
+
 function bootstrap(): void {
   const fields = new Map<string, RuntimeField>();
   let credLinks = new Map<string, string>();
   let geoLinks = new Map<string, string>();
   let snapshots: Snapshot[] = [];
   let seq = 0;
-  let lastRules: GenRules = DEFAULT_GEN_RULES;
+  let catalog: Catalog = buildCatalog(null);
 
-  const makeValue = (cand: FieldCandidate, semantic: FieldDTO['semantic'], rules: GenRules) =>
-    generate({ kind: cand.kind, semantic, label: cand.label, optionTexts: cand.optionTexts, rules });
+  const makeValue = (cand: FieldCandidate, ruleId: string): string =>
+    generate({ kind: cand.kind, ruleId, label: cand.label, optionTexts: cand.optionTexts, catalog });
 
-  const register = (cand: FieldCandidate, rules: GenRules): FieldDTO => {
+  const register = (cand: FieldCandidate): FieldDTO => {
     const id = `f${seq++}`;
-    const semantic = inferSemantic(
-      `${cand.label} ${cand.root.getAttribute('name') ?? ''} ${cand.root.id}`,
-      cand.kind,
-    );
-    const value = cand.skipped ? '' : makeValue(cand, semantic, rules);
-    const dto: FieldDTO = { id, label: cand.label, kind: cand.kind, semantic, value, optionTexts: cand.optionTexts, skipped: cand.skipped, reason: cand.reason };
+    const rule = inferRule(haystackOf(cand), cand.kind, catalog);
+    const dto: FieldDTO = {
+      id,
+      label: cand.label,
+      kind: cand.kind,
+      semantic: rule.id,
+      ruleName: rule.name,
+      ruleCustom: !rule.builtin,
+      value: cand.skipped ? '' : makeValue(cand, rule.id),
+      optionTexts: cand.optionTexts,
+      skipped: cand.skipped,
+      reason: cand.reason,
+    };
     fields.set(id, { cand, dto });
     return dto;
   };
@@ -54,15 +73,15 @@ function bootstrap(): void {
     return ra.compareDocumentPosition(rb) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
   };
 
-  const handleScan = async (rules: GenRules): Promise<ScanResult> => {
-    lastRules = rules;
+  const handleScan = async (stored: StoredRules): Promise<ScanResult> => {
+    catalog = buildCatalog(stored);
     fields.clear();
     credLinks.clear();
     geoLinks.clear();
     snapshots = [];
     const result: ScanResult = { fields: [], skipped: [] };
     const collect = (cand: FieldCandidate) => {
-      const dto = register(cand, rules);
+      const dto = register(cand);
       (dto.skipped ? result.skipped : result.fields).push(dto);
     };
     for (const cand of scanDocument(document)) collect(cand);
@@ -75,13 +94,23 @@ function bootstrap(): void {
     });
     result.fields.sort(byDocumentOrder);
     const active = result.fields.map((dto) => fields.get(dto.id)!);
-    credLinks = resolveCredentialLink(active, rules);
-    geoLinks = resolveGeoLink(active, rules);
+    credLinks = resolveCredentialLink(active, catalog);
+    geoLinks = resolveGeoLink(active);
     return result;
   };
 
-  const handleRegen = (id: string, rules: GenRules): string => {
-    lastRules = rules;
+  // 地址类字段的值变了，跟它绑定的经纬度要同步重算，否则坐标与地址脱钩。
+  const propagateGeoFrom = (id: string, value: string): void => {
+    for (const [geoId, srcId] of geoLinks) {
+      if (srcId !== id) continue;
+      const geoRt = fields.get(geoId);
+      const coord = coordForText(value);
+      if (geoRt && coord) geoRt.dto.value = coord;
+    }
+  };
+
+  const handleRegen = (id: string, stored: StoredRules): string => {
+    catalog = buildCatalog(stored);
     const rt = fields.get(id);
     if (!rt) throw new Error(`unknown field ${id}`);
     // lnglat is derived from its address/region source; follow the source rather than
@@ -95,23 +124,19 @@ function bootstrap(): void {
         return coord;
       }
     }
-    let semantic = rt.dto.semantic;
     const linkedTypeId = credLinks.get(id);
     if (linkedTypeId) {
       const typeRt = fields.get(linkedTypeId);
       if (typeRt) {
-        semantic = credentialSemantic(currentOptionText(typeRt.cand) || typeRt.dto.value);
-        rt.dto.semantic = semantic;
+        applyRule(rt.dto, credentialSemantic(currentOptionText(typeRt.cand) || typeRt.dto.value), catalog);
+        const value = rt.dto.value;
+        propagateGeoFrom(id, value);
+        return value;
       }
     }
-    const value = makeValue(rt.cand, semantic, rules);
+    const value = makeValue(rt.cand, rt.dto.semantic);
     rt.dto.value = value;
-    for (const [geoId, srcId] of geoLinks) {
-      if (srcId !== id) continue;
-      const geoRt = fields.get(geoId);
-      const coord = coordForText(value);
-      if (geoRt && coord) geoRt.dto.value = coord;
-    }
+    propagateGeoFrom(id, value);
     return value;
   };
 
@@ -121,7 +146,7 @@ function bootstrap(): void {
   const fillRevealed = async (overwrite: boolean, results: FillResult[]): Promise<number> => {
     const revealed = scanRevealed(knownTargets());
     for (const cand of revealed) {
-      const dto = register(cand, lastRules);
+      const dto = register(cand);
       if (!overwrite && hasExistingValue(cand)) {
         results.push({ id: dto.id, ok: true });
         continue;

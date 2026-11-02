@@ -1,3 +1,7 @@
+import type { StoredRules } from '../core/rules/types';
+
+export type { StoredRules };
+
 export type Kind =
   | 'text'
   | 'textarea'
@@ -22,35 +26,15 @@ export type Kind =
   | 'richtext'
   | 'lookup';
 
-export type Semantic =
-  | 'phone'
-  | 'landline'
-  | 'email'
-  | 'idNumber'
-  | 'creditCode'
-  | 'passport'
-  | 'bankCard'
-  | 'cnName'
-  | 'company'
-  | 'region'
-  | 'address'
-  | 'lnglat'
-  | 'date'
-  | 'amount'
-  | 'integer'
-  | 'paragraph'
-  | 'url'
-  | 'zipcode'
-  | 'gender'
-  | 'education'
-  | 'enum'
-  | 'generic';
-
 export interface FieldDTO {
   id: string;
   label: string;
   kind: Kind;
-  semantic: Semantic;
+  // 命中的规则 id。字段名沿用 semantic 时代的叫法。
+  semantic: string;
+  // 面板上显示的是规则名（中文），命中自定义规则时另加标记，一眼能看出这条值是按谁的规则造的。
+  ruleName: string;
+  ruleCustom: boolean;
   value: string;
   optionTexts?: string[];
   skipped?: boolean;
@@ -75,8 +59,8 @@ export interface FillResult {
 
 export type ContentRequest =
   | { type: 'ping' }
-  | { type: 'scan'; overwrite: boolean; rules: GenRules }
-  | { type: 'regen'; id: string; rules: GenRules }
+  | { type: 'scan'; overwrite: boolean; rules: StoredRules }
+  | { type: 'regen'; id: string; rules: StoredRules }
   | { type: 'fill'; cmds: FillCmd[]; overwrite: boolean }
   | { type: 'clear' }
   | { type: 'undo' };
@@ -89,40 +73,11 @@ export type InjectResponse = { ok: boolean; error?: string };
 
 export const RANDOM_OPTION_PLACEHOLDER = '(填充时随机选择)';
 
-// User-overridable generation rules. Empty string on pool-based fields means
-// "fall back to the built-in pool". Format fields use YYYY/MM/DD/HH/mm/ss tokens.
-export interface GenRules {
-  dateFormat: string;
-  datetimeFormat: string;
-  // 开启时普通日期只落在今天及以后（业务表单多为有效期/到期日，过去的日期常被判非法）。
-  // 历史语义字段（成立/出生/毕业/入职/注册）不受影响，否则会生成未来的出生日期。
-  dateFromToday: boolean;
-  emailDomain: string;
-  phonePrefixes: string;
-  companySuffixes: string;
-  // 造数标记：原样贴在名称类文本（词典未命中的 generic）与企业名两端，便于事后在业务
-  // 系统里检索出某个人造的数据。留空即不加；分隔符由用户自己写（如 `czy-`）。
-  namePrefix: string;
-  nameSuffix: string;
-}
-
-export const DEFAULT_GEN_RULES: GenRules = {
-  dateFormat: 'YYYY-MM-DD',
-  datetimeFormat: 'YYYY-MM-DD HH:mm:ss',
-  dateFromToday: true,
-  emailDomain: '',
-  phonePrefixes: '',
-  companySuffixes: '',
-  namePrefix: '',
-  nameSuffix: '',
-};
-
 export interface Settings {
   overwrite: boolean;
-  rules: GenRules;
 }
 
-export const DEFAULT_SETTINGS: Settings = { overwrite: false, rules: DEFAULT_GEN_RULES };
+export const DEFAULT_SETTINGS: Settings = { overwrite: false };
 
 // User-supplied upload files, persisted in chrome.storage.local. `data` is raw
 // base64 (no data-URL prefix); the fill path matches an entry against the input's

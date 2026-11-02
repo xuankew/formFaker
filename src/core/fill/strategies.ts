@@ -40,19 +40,19 @@ async function fillSelectWidget(cand: FieldCandidate, value: string): Promise<vo
   const options = Array.from(panel.querySelectorAll<HTMLElement>(FILL_SELECTORS.option)).filter(isVisibleEl);
   if (!options.length) throw new Error('下拉面板无可见选项');
   const liveOptions = () => Array.from(panel.querySelectorAll<HTMLElement>(FILL_SELECTORS.option)).filter(isVisibleEl);
-  const wanted = value && value !== RANDOM_OPTION_PLACEHOLDER ? value : null;
-  const wantedTexts = wanted ? wanted.split('、') : [];
+  const wantedTexts = value && value !== RANDOM_OPTION_PLACEHOLDER ? value.split('、') : [];
   const matched = wantedTexts.length
     ? options.filter((o) => wantedTexts.includes((o.textContent ?? '').trim()))
     : [];
-  const first = matched[0] ?? rand(options);
-  realClick(first);
+  // 生成值对不上面板文案时随机挑一项，同一张表反复填不会永远是同一个选项。
+  const chosen = matched[0] ?? rand(options);
+  realClick(chosen);
   if (multi) {
     await sleep(80);
     const live = liveOptions();
     const second = wantedTexts[1]
       ? live.find((o) => (o.textContent ?? '').trim() === wantedTexts[1])
-      : live.find((o) => o !== first);
+      : live.find((o) => o !== chosen);
     if (second) realClick(second);
     const input = root.querySelector('input');
     (input ?? trigger).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
@@ -203,7 +203,8 @@ export async function fillCandidate(cand: FieldCandidate, value: string): Promis
       const select = primary as HTMLSelectElement;
       // 回退不能落到 options[0]：那通常是「请选择」占位项，等于没填。
       const real = Array.from(select.options).filter((o) => o.value !== '' && !PLACEHOLDER_OPTION_RE.test(o.text.trim()));
-      const option = real.find((o) => o.text.trim() === value || o.value === value) ?? real[0];
+      // 生成值对不上任何选项文案时随机挑一项，别恒定选第一个——同一张表反复填会全是同一个值。
+      const option = real.find((o) => o.text.trim() === value || o.value === value) ?? rand(real);
       if (option) {
         select.value = option.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));

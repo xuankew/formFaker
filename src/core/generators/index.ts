@@ -1,20 +1,20 @@
-import type { GenRules, Kind, Semantic } from '../../shared/types';
-import { DEFAULT_GEN_RULES, RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
-import { normalizeEmailDomain } from '../../shared/rules';
-import {
-  COMPANY_FORMS, COMPANY_INDUSTRIES, COMPANY_WORDS, EDUCATIONS, EMAIL_DOMAINS, EMAIL_NAMES,
-  GIVEN_CHARS, GENDERS, LANDLINE_AREACODES, PARAGRAPH_SENTENCES, PHONE_PREFIXES, STREET_NAMES,
-  SURNAMES, digits, intBetween, pick,
-} from './pools';
+import type { Kind } from '../../shared/types';
+import { RANDOM_OPTION_PLACEHOLDER } from '../../shared/types';
+import type { Catalog, FieldRule, GenSpec } from '../rules/types';
+import { GENERIC_RULE_ID } from '../rules/types';
+import { renderTemplate } from '../rules/dsl';
+import { formatDate } from '../rules/datefmt';
+import { digits, intBetween, pick, shuffled } from '../rules/random';
 import { randomAreaCode, randomCityName, randomRegionPath } from './region';
 import { cityCenter, formatLngLat } from './geo';
 
 export interface GeneratorCtx {
   kind: Kind;
-  semantic: Semantic;
+  // 命中的规则 id（字段名沿用 semantic 时代的叫法，值是规则 id）。
+  ruleId: string;
   label: string;
   optionTexts?: string[];
-  rules?: GenRules;
+  catalog: Catalog;
 }
 
 const ID_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
@@ -50,92 +50,87 @@ export function luhnCheckDigit(body: string): string {
   return String((10 - (sum % 10)) % 10);
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
+const pad = (n: number): string => String(n).padStart(2, '0');
+const DAY = 86400000;
+
+// Fixed internal format: the compact date embedded in an ID number body.
+function compactDate(d: Date): string {
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
-// Fixed internal format, used where a stable machine format is required
-// (e.g. the compact date embedded in an ID number body).
-function fmtDate(d: Date, withTime: boolean): string {
-  const base = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return withTime ? `${base} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` : base;
+type DateGen = Extract<GenSpec, { type: 'date' }>;
+
+const DEFAULT_DATE_GEN: DateGen = {
+  type: 'date',
+  dateFormat: 'YYYY-MM-DD',
+  timeFormat: 'YYYY-MM-DD HH:mm:ss',
+  direction: 'future',
+  spanMinDays: 30,
+  spanMaxDays: 1000,
+};
+
+function dateGenOf(rule: FieldRule): DateGen {
+  return rule.gen.type === 'date' ? rule.gen : DEFAULT_DATE_GEN;
 }
 
-// Token-based formatter honoring user rules: YYYY MM DD HH mm ss.
-function applyFormat(d: Date, fmt: string): string {
-  const map: Record<string, string> = {
-    YYYY: String(d.getFullYear()),
-    MM: pad(d.getMonth() + 1),
-    DD: pad(d.getDate()),
-    HH: pad(d.getHours()),
-    mm: pad(d.getMinutes()),
-    ss: pad(d.getSeconds()),
-  };
-  return fmt.replace(/YYYY|MM|DD|HH|mm|ss/g, (t) => map[t]);
-}
+// 历史语义字段必须落在过去，否则会出现「出生日期 2027 年」这种数据；这条不受方向设置影响。
+const HISTORY_LABEL_RE = /成立|出生|毕业|入职|注册/;
 
-function parseList(s: string): string[] {
-  return s.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
-}
-
-// 原样贴上用户配置的标记，不自动补分隔符（要 `-` 就写在设置里）。
-function mark(value: string, rules: GenRules): string {
-  return `${rules.namePrefix.trim()}${value}${rules.nameSuffix.trim()}`;
-}
-
-function randomDate(from: Date, to: Date, withTime: boolean): string {
-  const t = from.getTime() + Math.random() * (to.getTime() - from.getTime());
-  return fmtDate(new Date(t), withTime);
+function dateBounds(label: string, gen: DateGen): { from: Date; to: Date } {
+  const now = Date.now();
+  if (HISTORY_LABEL_RE.test(label)) return { from: new Date('1960-01-01'), to: new Date('2015-12-31') };
+  const to = new Date(now + 365 * DAY);
+  if (gen.direction === 'past') return { from: new Date(now - 1500 * DAY), to: new Date(now) };
+  if (gen.direction === 'any') return { from: new Date(now - 1500 * DAY), to };
+  const from = new Date(now);
+  from.setHours(0, 0, 0, 0);
+  return { from, to };
 }
 
 function randomDateIn(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.random() * (to.getTime() - from.getTime()));
 }
 
-function dateBounds(label: string, rules: GenRules): { from: Date; to: Date } {
-  const now = Date.now();
-  if (/成立|出生|毕业|入职|注册/.test(label)) {
-    return { from: new Date('1960-01-01'), to: new Date('2015-12-31') };
-  }
-  const to = new Date(now + 365 * 86400000);
-  if (!rules.dateFromToday) return { from: new Date(now - 1500 * 86400000), to };
-  const from = new Date(now);
-  from.setHours(0, 0, 0, 0);
-  return { from, to };
+// 原样贴上用户配置的标记，不自动补分隔符（要 `-` 就写在设置里）。
+function marked(value: string, catalog: Catalog): string {
+  return `${catalog.marks.prefix.trim()}${value}${catalog.marks.suffix.trim()}`;
 }
 
-function dateFor(ctx: GeneratorCtx, withTime: boolean): string {
-  const rules = ctx.rules ?? DEFAULT_GEN_RULES;
-  const { from, to } = dateBounds(ctx.label, rules);
-  return applyFormat(randomDateIn(from, to), withTime ? rules.datetimeFormat : rules.dateFormat);
-}
+const BIG_AMOUNT_RE = /资本|资金|人数|数量|营业额|营收|销售额|收入|利润|产值|[（(]元[）)]/;
+const YEAR_COUNT_RE = /年限|年数|工龄|司龄|[（(]年[）)]/;
 
-function enumValue(ctx: GeneratorCtx): string {
-  const options = ctx.optionTexts ?? [];
-  if (!options.length) return RANDOM_OPTION_PLACEHOLDER;
-  if (ctx.semantic === 'gender') {
-    const hit = options.find((o) => GENDERS.includes(o));
-    if (hit) return hit;
-  }
-  if (ctx.semantic === 'education') {
-    const hit = options.find((o) => EDUCATIONS.includes(o));
-    if (hit) return hit;
-  }
-  return pick(options);
-}
-
-export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
-  phone: (ctx) => {
-    const custom = parseList((ctx.rules ?? DEFAULT_GEN_RULES).phonePrefixes);
-    return (custom.length ? pick(custom) : pick(PHONE_PREFIXES)) + digits(8);
+const BUILTINS: Record<string, (ctx: GeneratorCtx) => string> = {
+  cnName: (ctx) => {
+    const surnames = ctx.catalog.pools.surname ?? [];
+    const given = ctx.catalog.pools.givenChar ?? [];
+    if (!surnames.length || !given.length) return '';
+    let name = pick(surnames);
+    for (let i = 0, n = intBetween(1, 2); i < n; i++) name += pick(given);
+    return name;
   },
-  landline: () => `${pick(LANDLINE_AREACODES)}-${digits(Math.random() < 0.5 ? 7 : 8)}`,
-  email: (ctx) => {
-    const domain = normalizeEmailDomain((ctx.rules ?? DEFAULT_GEN_RULES).emailDomain) || pick(EMAIL_DOMAINS);
-    return `${pick(EMAIL_NAMES)}${digits(3)}@${domain}`;
+  company: (ctx) => {
+    const p = ctx.catalog.pools;
+    // 直辖市与省直辖县级区划的市级是占位名，randomCityName 已经过滤掉了。
+    const city = randomCityName().replace(/市$/, '');
+    return `${city}${pick(p.companyWord ?? [])}${pick(p.companyIndustry ?? [])}${pick(p.companyForm ?? [])}`;
+  },
+  region: () => {
+    const r = randomRegionPath();
+    // 直辖市的市级是占位名，randomRegionPath 已置空，这里按空值省掉该级。
+    return [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('/');
+  },
+  address: (ctx) => {
+    const r = randomRegionPath();
+    const base = [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('');
+    const street = pick(ctx.catalog.pools.streetName ?? ['']);
+    return `${base}${street}${intBetween(1, 999)}号${intBetween(1, 30)}幢${intBetween(101, 2505)}室`;
+  },
+  lnglat: () => {
+    const r = randomRegionPath();
+    return formatLngLat(cityCenter(r.province, r.city || r.province));
   },
   idNumber: () => {
-    const body = randomAreaCode() + randomDate(new Date('1960-01-01'), new Date('2005-12-31'), false).replaceAll('-', '') + digits(3);
+    const body = randomAreaCode() + compactDate(randomDateIn(new Date('1960-01-01'), new Date('2005-12-31'))) + digits(3);
     return body + idCheckDigit(body);
   },
   creditCode: () => {
@@ -143,72 +138,75 @@ export const GENERATORS: Record<Semantic, (ctx: GeneratorCtx) => string> = {
     for (let i = 0; i < 9; i++) body += USCC_CHARS[Math.floor(Math.random() * USCC_CHARS.length)];
     return body + usccCheckDigit(body);
   },
-  passport: () => pick(['E', 'G', 'P', 'EA']) + digits(8),
   bankCard: () => {
     const body = '62' + digits(intBetween(13, 16));
     return body + luhnCheckDigit(body);
   },
-  cnName: () => pick([...SURNAMES]) + Array.from({ length: intBetween(1, 2) }, () => pick([...GIVEN_CHARS])).join(''),
-  company: (ctx) => {
-    const rules = ctx.rules ?? DEFAULT_GEN_RULES;
-    const custom = parseList(rules.companySuffixes);
-    const suffix = custom.length ? pick(custom) : pick(COMPANY_FORMS);
-    return mark(randomCityName().replace(/市$/, '') + pick(COMPANY_WORDS) + pick(COMPANY_INDUSTRIES) + suffix, rules);
+  paragraph: (ctx) => {
+    const sentences = ctx.catalog.pools.sentence ?? [];
+    if (!sentences.length) return '';
+    return shuffled(sentences)
+      .slice(0, Math.min(sentences.length, intBetween(2, 4)))
+      .join('');
   },
-  region: () => {
-    const r = randomRegionPath();
-    // 直辖市的市级是占位名，randomRegionPath 已置空，这里按空值省掉该级。
-    return [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('/');
-  },
-  address: () => {
-    const r = randomRegionPath();
-    const base = [r.province, r.city, ...(r.hasArea ? [r.area] : [])].filter(Boolean).join('');
-    return `${base}${pick(STREET_NAMES)}${intBetween(1, 999)}号${intBetween(1, 30)}幢${intBetween(101, 2505)}室`;
-  },
-  lnglat: () => {
-    const r = randomRegionPath();
-    return formatLngLat(cityCenter(r.province, r.city || r.province));
-  },
-  date: (ctx) => dateFor(ctx, ctx.kind === 'datetime'),
   amount: (ctx) => {
-    if (/资本|资金|人数|数量|营业额|营收|销售额|收入|利润|产值|[（(]元[）)]/.test(ctx.label)) return String(intBetween(100, 50000) * 10000);
+    if (BIG_AMOUNT_RE.test(ctx.label)) return String(intBetween(100, 50000) * 10000);
     return (intBetween(100, 50000000) / 100).toFixed(2);
   },
-  integer: (ctx) => (/年限|年数|工龄|司龄|[（(]年[）)]/.test(ctx.label) ? String(intBetween(1, 30)) : String(intBetween(1, 999))),
-  paragraph: () => {
-    const n = intBetween(2, 4);
-    const shuffled = [...PARAGRAPH_SENTENCES].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, n).join('');
-  },
-  url: () => `https://www.${pick(EMAIL_NAMES)}${digits(2)}.com`,
-  zipcode: () => String(intBetween(1, 6)) + digits(5),
-  gender: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(GENDERS) : enumValue(ctx),
-  education: (ctx) => enumValue(ctx) === RANDOM_OPTION_PLACEHOLDER ? pick(EDUCATIONS) : enumValue(ctx),
-  enum: (ctx) => enumValue(ctx),
-  generic: (ctx) => {
-    if (ctx.kind === 'number') return String(intBetween(1, 999));
-    return mark(`autotest-${Math.random().toString(36).slice(2, 7)}`, ctx.rules ?? DEFAULT_GEN_RULES);
-  },
+  integer: (ctx) => (YEAR_COUNT_RE.test(ctx.label) ? String(intBetween(1, 30)) : String(intBetween(1, 999))),
 };
 
+function renderValue(ctx: GeneratorCtx, rule: FieldRule): string {
+  const gen = rule.gen;
+  const { catalog } = ctx;
+  switch (gen.type) {
+    case 'template':
+      return renderTemplate(gen.template, { pools: catalog.pools, charset: gen.charset });
+    case 'pool':
+      return pick(catalog.pools[gen.pool] ?? ['']);
+    case 'range': {
+      const raw = gen.min + Math.random() * (gen.max - gen.min);
+      return gen.decimals ? raw.toFixed(gen.decimals) : String(Math.round(raw));
+    }
+    case 'date': {
+      const { from, to } = dateBounds(ctx.label, gen);
+      const fmt = ctx.kind === 'datetime' ? gen.timeFormat : gen.dateFormat;
+      return formatDate(randomDateIn(from, to), fmt);
+    }
+    // 页面候选随机。生成值与选项文案不完全一致时由填充层做模糊匹配，兜不住再随机挑一项。
+    case 'option': {
+      const options = ctx.optionTexts ?? [];
+      return options.length ? pick(options) : RANDOM_OPTION_PLACEHOLDER;
+    }
+    case 'builtin':
+      return BUILTINS[gen.fn]?.(ctx) ?? '';
+  }
+}
+
 export function generate(ctx: GeneratorCtx): string {
+  const rule = ctx.catalog.byId.get(ctx.ruleId) ?? ctx.catalog.byId.get(GENERIC_RULE_ID);
+  if (!rule) return '';
+
   if (ctx.kind === 'daterange') {
-    const rules = ctx.rules ?? DEFAULT_GEN_RULES;
-    const { from, to } = dateBounds(ctx.label, rules);
-    const startD = randomDateIn(from, to);
-    const endD = new Date(startD.getTime() + (30 + Math.random() * 970) * 86400000);
-    return `${applyFormat(startD, rules.dateFormat)} ~ ${applyFormat(endD, rules.dateFormat)}`;
+    const gen = dateGenOf(rule);
+    const { from, to } = dateBounds(ctx.label, gen);
+    const start = randomDateIn(from, to);
+    const end = new Date(start.getTime() + intBetween(gen.spanMinDays, gen.spanMaxDays) * DAY);
+    return `${formatDate(start, gen.dateFormat)} ~ ${formatDate(end, gen.dateFormat)}`;
   }
   if (ctx.kind === 'checkbox' || ctx.kind === 'switch') return Math.random() < 0.5 ? 'true' : 'false';
   if (ctx.kind === 'checkbox-group') {
     const options = ctx.optionTexts ?? [];
     if (!options.length) return RANDOM_OPTION_PLACEHOLDER;
-    const n = Math.min(options.length, intBetween(1, 2));
-    return [...options].sort(() => Math.random() - 0.5).slice(0, n).join('、');
+    return shuffled(options)
+      .slice(0, Math.min(options.length, intBetween(1, 2)))
+      .join('、');
   }
   if (ctx.kind === 'upload-image') return `[图片 test-${digits(4)}.png]`;
   if (ctx.kind === 'upload-file') return `[文件 test-${digits(4)}.pdf]`;
   // The value comes from a record picked inside the dialog, not from a generator.
   if (ctx.kind === 'lookup') return RANDOM_OPTION_PLACEHOLDER;
-  return GENERATORS[ctx.semantic](ctx);
+
+  const value = renderValue(ctx, rule);
+  return rule.mark ? marked(value, ctx.catalog) : value;
 }

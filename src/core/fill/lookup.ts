@@ -28,7 +28,7 @@ function text(el: HTMLElement): string {
   return (el.textContent ?? '').replace(/\s+/g, '');
 }
 
-// Value written back to the field: whitespace collapsed but kept, since 「HW050001 雪王环球
+// Value written back to the field: whitespace collapsed but kept, since 「HW050001 星海环球
 // 有限公司」 loses its meaning when the parts are glued together.
 function readable(el: HTMLElement): string {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim();

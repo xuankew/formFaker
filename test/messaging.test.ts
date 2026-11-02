@@ -13,7 +13,7 @@ describe('hintForUrl', () => {
   });
 
   it('asks for a page refresh on normal business pages and keeps the raw error as evidence', () => {
-    const hint = hintForUrl('https://srm.example.com/supplier/apply', RAW);
+    const hint = hintForUrl('https://erp.example.com/vendor/apply', RAW);
     expect(hint).toContain('刷新本页');
     expect(hint).toContain(RAW);
   });

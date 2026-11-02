@@ -19,8 +19,8 @@ export default defineConfig({
         options: 'options.html',
         demo: 'demo.html',
       },
-      // 公司安全策略按文件名给 .js 加白，内容哈希会让白名单每次构建都失效。
-      // 扩展读本地文件、不走 HTTP 缓存，固定名不损失任何缓存收益。
+      // 固定文件名（不带内容哈希）：便于内网 / 企业环境按文件名做加载白名单，
+      // 也让升级后资源路径不变。扩展读本地文件、不走 HTTP 缓存，固定名不损失缓存收益。
       output: {
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',

@@ -36,9 +36,33 @@ describe('fill native paths', () => {
     select.innerHTML = '<option value="">请选择</option><option value="a">甲</option><option value="b">乙</option>';
     document.body.appendChild(select);
     await fillCandidate(cand('select', [select]), RANDOM_OPTION_PLACEHOLDER);
-    expect(select.value).toBe('a');
+    expect(['a', 'b']).toContain(select.value);
     await fillCandidate(cand('select', [select]), '不存在的选项');
-    expect(select.value).toBe('a');
+    expect(['a', 'b']).toContain(select.value);
+  });
+
+  it('对不上文案时随机挑一项，而不是恒定第一个', async () => {
+    const select = document.createElement('select');
+    select.innerHTML =
+      '<option value="">请选择</option><option value="a">甲</option><option value="b">乙</option><option value="c">丙</option>';
+    document.body.appendChild(select);
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      await fillCandidate(cand('select', [select]), RANDOM_OPTION_PLACEHOLDER);
+      seen.add(select.value);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+    for (const v of seen) expect(['a', 'b', 'c']).toContain(v);
+  });
+
+  it('文案对得上时仍精确选中，随机只用于兜底', async () => {
+    const select = document.createElement('select');
+    select.innerHTML = '<option value="">请选择</option><option value="a">甲</option><option value="b">乙</option>';
+    document.body.appendChild(select);
+    for (let i = 0; i < 20; i++) {
+      await fillCandidate(cand('select', [select]), '乙');
+      expect(select.value).toBe('b');
+    }
   });
 
   it('toggles checkbox to desired state only', async () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { auditEntries, liveValue, type AuditEntry } from '../src/dev/audit';
+import { buildCatalog, pristineRule } from '../src/core/rules/catalog';
+import { emptyStored } from '../src/core/rules/store';
 import type { FieldCandidate } from '../src/core/scan';
 import type { Kind } from '../src/shared/types';
 
@@ -47,8 +49,10 @@ describe('audit 不变量', () => {
     expect(report.violations).toEqual([]);
   });
 
-  it('语义错位：纳税人识别号落到 generic', async () => {
-    const report = await auditEntries([inputItem('纳税人识别号', 'autotest-k3j2h')]);
+  it('语义错位：规则被停用后纳税人识别号落到 generic', async () => {
+    // 规则中心允许停用内置规则，停用后就该被审计抓出来，而不是静默生成兜底文本。
+    const cat = buildCatalog({ ...emptyStored(), rules: [{ ...pristineRule('creditCode')!, disabled: true }] });
+    const report = await auditEntries([inputItem('纳税人识别号', 'test-k3j2h')], cat);
     expect(report.violations).toEqual([
       expect.objectContaining({ label: '纳税人识别号', rule: 'semantic-miss', semantic: 'generic' }),
     ]);
@@ -150,7 +154,7 @@ describe('audit 不变量', () => {
     const cand: FieldCandidate = { label: '生效日期', kind: 'daterange', root: document.querySelector('.el-date-editor')!, targets: inputs };
     const ok = await auditEntries([{ cand, value: '2024-01-01 ~ 2024-06-30' }]);
     expect(ok.violations).toEqual([]);
-    const bad = await auditEntries([{ cand, value: '2024-01-01 ~ autotest-x1' }]);
+    const bad = await auditEntries([{ cand, value: '2024-01-01 ~ test-x1' }]);
     expect(bad.violations.map((v) => v.rule)).toEqual(['value-shape']);
   });
 

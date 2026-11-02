@@ -1,25 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { scanDocument } from '../src/core/scan';
-import { inferSemantic } from '../src/core/semantics/infer';
+import { inferRule, inferSemantic } from '../src/core/semantics/infer';
 import { resolveGeoLink, type LinkEntry } from '../src/core/semantics/link';
 import { coordForText, parseRegionNames } from '../src/core/generators/geo';
 import { generate } from '../src/core/generators';
-import { DEFAULT_GEN_RULES, type FieldDTO } from '../src/shared/types';
+import { defaultCatalog } from '../src/core/rules/catalog';
+import type { FieldDTO } from '../src/shared/types';
 
 const COORD_RE = /^-?\d+\.\d{6},-?\d+\.\d{6}$/;
+
+const CAT = defaultCatalog();
 
 function entries(html: string): LinkEntry[] {
   document.body.innerHTML = html;
   return scanDocument(document)
     .filter((c) => !c.skipped)
     .map((cand, i) => {
-      const semantic = inferSemantic(cand.label, cand.kind);
+      const rule = inferRule(cand.label, cand.kind, CAT);
       const dto: FieldDTO = {
         id: `f${i}`,
         label: cand.label,
         kind: cand.kind,
-        semantic,
-        value: generate({ kind: cand.kind, semantic, label: cand.label, optionTexts: cand.optionTexts, rules: DEFAULT_GEN_RULES }),
+        semantic: rule.id,
+        ruleName: rule.name,
+        ruleCustom: !rule.builtin,
+        value: generate({ kind: cand.kind, ruleId: rule.id, label: cand.label, optionTexts: cand.optionTexts, catalog: CAT }),
         optionTexts: cand.optionTexts,
       };
       return { cand, dto };
@@ -82,7 +87,7 @@ describe('address -> lnglat linkage', () => {
         <div><label for="addr">注册地址</label><input id="addr" type="text" /></div>
         <div><label for="ll">经纬度</label><input id="ll" type="text" disabled /></div>
       </form>`);
-    const links = resolveGeoLink(list, DEFAULT_GEN_RULES);
+    const links = resolveGeoLink(list);
     const addr = list.find((e) => e.dto.label === '注册地址')!;
     const ll = list.find((e) => e.dto.label === '经纬度')!;
     expect(ll.dto.semantic).toBe('lnglat');
@@ -105,14 +110,14 @@ describe('address -> lnglat linkage', () => {
     const ll = list.find((e) => e.dto.label === '经纬度')!;
     region.dto.value = '贵州省贵阳市南明区';
     addr.dto.value = '江西省宜春市宜丰县人民路1号';
-    const links = resolveGeoLink(list, DEFAULT_GEN_RULES);
+    const links = resolveGeoLink(list);
     expect(links.get(ll.dto.id)).toBe(addr.dto.id);
     expect(ll.dto.value).toBe(coordForText(addr.dto.value));
     expect(ll.dto.value).not.toBe(coordForText(region.dto.value));
   });
 
   it('returns no links without a coordinate field or without an address source', () => {
-    expect(resolveGeoLink(entries(`<form><div><label for="a">注册地址</label><input id="a" /></div></form>`), DEFAULT_GEN_RULES).size).toBe(0);
-    expect(resolveGeoLink(entries(`<form><div><label for="l">经纬度</label><input id="l" disabled /></div></form>`), DEFAULT_GEN_RULES).size).toBe(0);
+    expect(resolveGeoLink(entries(`<form><div><label for="a">注册地址</label><input id="a" /></div></form>`)).size).toBe(0);
+    expect(resolveGeoLink(entries(`<form><div><label for="l">经纬度</label><input id="l" disabled /></div></form>`)).size).toBe(0);
   });
 });

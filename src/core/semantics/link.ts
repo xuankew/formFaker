@@ -1,5 +1,6 @@
 import type { FieldCandidate } from '../scan';
-import type { FieldDTO, GenRules } from '../../shared/types';
+import type { FieldDTO } from '../../shared/types';
+import type { Catalog } from '../rules/types';
 import { generate } from '../generators';
 import { coordForText } from '../generators/geo';
 import { CREDENTIAL_NO_RE, CREDENTIAL_TYPE_RE, credentialSemantic, OPTION_KINDS } from './infer';
@@ -31,7 +32,7 @@ export function currentOptionText(cand: FieldCandidate): string {
 // option of a sibling credential-type field. Returns numberId -> typeId so callers
 // can re-resolve on regen. Uses the type's current DOM value when present, else the
 // type's planned generated value (fill order keeps them consistent).
-export function resolveCredentialLink(entries: LinkEntry[], rules: GenRules): Map<string, string> {
+export function resolveCredentialLink(entries: LinkEntry[], catalog: Catalog): Map<string, string> {
   const links = new Map<string, string>();
   const active = entries.filter((e) => !e.cand.skipped);
   const type = active.find((e) => CREDENTIAL_TYPE_RE.test(e.cand.label) && OPTION_KINDS.has(e.cand.kind));
@@ -39,10 +40,25 @@ export function resolveCredentialLink(entries: LinkEntry[], rules: GenRules): Ma
   if (!type || !no) return links;
   links.set(no.dto.id, type.dto.id);
   const typeText = currentOptionText(type.cand) || type.dto.value;
-  const semantic = credentialSemantic(typeText);
-  no.dto.semantic = semantic;
-  no.dto.value = generate({ kind: no.cand.kind, semantic, label: no.cand.label, rules });
+  const ruleId = credentialSemantic(typeText);
+  applyRule(no.dto, ruleId, catalog);
   return links;
+}
+
+// 证照联动改的是号码字段实际用哪条规则，DTO 上的规则名与自定义标记要跟着换，
+// 否则弹窗里仍显示扫描时命中的那条。
+export function applyRule(dto: FieldDTO, ruleId: string, catalog: Catalog): void {
+  const rule = catalog.byId.get(ruleId);
+  dto.semantic = ruleId;
+  dto.ruleName = rule?.name ?? ruleId;
+  dto.ruleCustom = !!rule && !rule.builtin;
+  dto.value = generate({
+    kind: dto.kind,
+    ruleId,
+    label: dto.label,
+    optionTexts: dto.optionTexts,
+    catalog,
+  });
 }
 
 // Form containers used to scope cross-field linkage so a derived field binds to a
@@ -53,7 +69,7 @@ const FORM_SCOPE = 'form, .el-form, .ant-form, [role="form"]';
 // address/region chosen elsewhere on the form (normally via a map picker). Tie it to
 // the sibling address/region field in the same form so the coordinate matches the
 // generated address. Returns lnglatId -> sourceId so callers can re-resolve on regen.
-export function resolveGeoLink(entries: LinkEntry[], _rules: GenRules): Map<string, string> {
+export function resolveGeoLink(entries: LinkEntry[]): Map<string, string> {
   const links = new Map<string, string>();
   const active = entries.filter((e) => !e.cand.skipped);
   const geos = active.filter((e) => e.dto.semantic === 'lnglat');

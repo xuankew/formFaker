@@ -252,7 +252,7 @@ const template = `
     </el-table>
   </el-dialog>
 
-  <!-- 树形选择弹窗（SRM「选择跟进组织」形态）：父节点是组织组，叶子才是可选公司 -->
+  <!-- 树形选择弹窗（企业系统「选择跟进组织」形态）：父节点是组织组，叶子才是可选公司 -->
   <el-dialog v-model="orgPickerVisible" title="选择跟进组织" width="560px">
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <el-input v-model="orgKeyword" placeholder="请输入名称或编码" clearable style="width:220px" />
@@ -304,8 +304,8 @@ const app = createApp({
     const pickerVisible = ref(false);
     const pickedId = ref('');
     const pickerRows = [
-      { no: 'QX0001', bank: '中国银行郑州分行' },
-      { no: 'QX0002', bank: '招商银行深圳分行' },
+      { no: 'QX0001', bank: '示例银行高新分行' },
+      { no: 'QX0002', bank: '示例银行滨江分行' },
     ];
     const pickRow = (row: { no: string }) => { pickedId.value = row.no; };
     const confirmPick = () => {
@@ -333,28 +333,28 @@ const app = createApp({
     interface OrgNode { id: string; name: string; children?: OrgNode[] }
     const ORG_ALL: OrgNode[] = [
       {
-        id: 'MXBCVN', name: 'MXBCVN 蜜雪冰城-越南',
+        id: 'VN01', name: 'VN01 越南大区',
         children: [
-          { id: 'HW050001', name: 'HW050001 雪王环球有限公司' },
-          { id: 'MXBCML', name: 'MXBCML 雪王马来西亚公司' },
+          { id: 'HW050001', name: 'HW050001 星海环球有限公司' },
+          { id: 'MY0201', name: 'MY0201 南洋贸易有限公司' },
         ],
       },
       {
-        id: 'ML', name: 'ML 马来西亚',
-        children: [{ id: 'XYKML', name: 'XYKML 雪王咖啡马来西亚' }],
+        id: 'MY02', name: 'MY02 马来分部',
+        children: [{ id: 'CF0301', name: 'CF0301 云顶咖啡有限公司' }],
       },
-      { id: 'GYS202609190001', name: 'GYS202609190001 郑州供应商一' },
-      { id: 'GYS202609190002', name: 'GYS202609190002 郑州供应商二' },
-      { id: 'GYS202609220001', name: 'GYS202609220001 长沙供应商三' },
+      { id: 'GYS202609190001', name: 'GYS202609190001 中原供应商一' },
+      { id: 'GYS202609190002', name: 'GYS202609190002 中原供应商二' },
+      { id: 'GYS202609220001', name: 'GYS202609220001 江南供应商三' },
     ];
-    const ORG_LEAVES = ['HW050001', 'MXBCML', 'XYKML', 'GYS202609190001', 'GYS202609190002', 'GYS202609220001'];
+    const ORG_LEAVES = ['HW050001', 'MY0201', 'CF0301', 'GYS202609190001', 'GYS202609190002', 'GYS202609220001'];
     const orgPickerVisible = ref(false);
     const orgKeyword = ref('');
     const orgTree = ref();
     const orgRows = ORG_ALL;
     const pickedOrg = ref('');
     // 只默认展开第一组：折叠组的子节点在 EP 里根本不渲染，正好验证「叶子优先 + 无叶子才展开」。
-    const orgExpanded = ref(['MXBCVN']);
+    const orgExpanded = ref(['VN01']);
     const pickOrgNode = (data: { id: string }) => { pickedOrg.value = data.id; };
     const filterOrg = (value: string, data: { name: string }) => !value || data.name.includes(value);
     const searchOrg = () => orgTree.value?.filter(orgKeyword.value.trim());

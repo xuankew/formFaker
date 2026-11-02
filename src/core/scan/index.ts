@@ -2,7 +2,7 @@ import type { Kind } from '../../shared/types';
 import { WIDGET_SELECTOR, classifyWidget, findLookupTrigger } from './selectors';
 import { buildLabelIndex, cleanLabel, labelTextFor } from './label';
 import { classifyNative, isDisabled, isVisible, hintSaysImage } from './classify';
-import { LNGLAT_RE } from '../semantics/rules';
+import { LNGLAT_RE } from '../rules/catalog';
 
 export interface FieldCandidate {
   label: string;

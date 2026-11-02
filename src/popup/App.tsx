@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FieldDTO, FillResult, ScanResult, Settings } from '../shared/types';
+import type { FieldDTO, FillResult, ScanResult, Settings, StoredRules } from '../shared/types';
 import { DEFAULT_SETTINGS, RANDOM_OPTION_PLACEHOLDER } from '../shared/types';
+import { GENERIC_RULE_ID, RULES_KEY } from '../core/rules/types';
+import { emptyStored, loadRules } from '../core/rules/store';
 import { loadSettings, saveSettings } from '../shared/storage';
 import { activeTabId, reinject, sendToContent, unreachableHint } from '../shared/messaging';
 import SettingsPanel from '../shared/SettingsPanel';
+import RulesPanel from '../shared/RulesPanel';
 import './styles.css';
 
 const KIND_LABELS: Record<string, string> = {
@@ -30,13 +33,16 @@ export default function App() {
   const [included, setIncluded] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const rulesRef = useRef<StoredRules>(emptyStored());
+  // 上次识别时用的规则与覆盖开关。从设置页回来时靠它判断要不要重扫。
+  const scannedRef = useRef('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [tone, setTone] = useState<'' | 'warn' | 'err'>('');
   const [showSkipped, setShowSkipped] = useState(false);
   const skippedRef = useRef<HTMLDetailsElement>(null);
-  const [view, setView] = useState<'fields' | 'settings'>('fields');
+  const [view, setView] = useState<'fields' | 'settings' | 'rules'>('fields');
 
   const request = useCallback(async <T,>(msg: Parameters<typeof sendToContent>[1]): Promise<T> => {
     let id = tabId;
@@ -57,7 +63,8 @@ export default function App() {
     setBusy(true);
     setStatus('识别中…');
     try {
-      const result = await request<ScanResult>({ type: 'scan', overwrite: s.overwrite, rules: s.rules });
+      const result = await request<ScanResult>({ type: 'scan', overwrite: s.overwrite, rules: rulesRef.current });
+      scannedRef.current = JSON.stringify({ rules: rulesRef.current, overwrite: s.overwrite });
       setFields(result.fields);
       setSkipped(result.skipped);
       setValues(Object.fromEntries(result.fields.map((f) => [f.id, f.value])));
@@ -76,14 +83,19 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    loadSettings().then((s) => {
+    void Promise.all([loadSettings(), loadRules()]).then(([s, r]) => {
       if (!alive) return;
       setSettings(s);
+      rulesRef.current = r;
       void scan(s);
     });
     const onChanged = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
       if (areaName === 'sync' && changes['ff.settings']) {
         loadSettings().then((s) => { if (alive) setSettings(s); });
+      }
+      // 规则中心与弹窗同处一个页面实例，改完不会重新挂载，只能靠存储事件同步。
+      if (areaName === 'local' && changes[RULES_KEY]) {
+        loadRules().then((r) => { if (alive) rulesRef.current = r; });
       }
     };
     chrome.storage.onChanged.addListener(onChanged);
@@ -96,7 +108,7 @@ export default function App() {
 
   const regen = async (id: string) => {
     try {
-      const { value } = await request<{ value: string }>({ type: 'regen', id, rules: settings.rules });
+      const { value } = await request<{ value: string }>({ type: 'regen', id, rules: rulesRef.current });
       setValues((v) => ({ ...v, [id]: value }));
     } catch (err) {
       setTone('err');
@@ -165,16 +177,21 @@ export default function App() {
     await saveSettings(next);
   };
 
-  if (view === 'settings') {
+  // 规则中心改过规则后，列表上的规则名与生成值都是旧的，得重新识别；
+  // 没改就别扫，否则会清掉用户已经勾掉的字段。
+  const backToFields = () => {
+    setView('fields');
+    if (JSON.stringify({ rules: rulesRef.current, overwrite: settings.overwrite }) !== scannedRef.current) void scan();
+  };
+
+  if (view === 'settings' || view === 'rules') {
     return (
       <div className="app">
         <header>
-          <button className="ghost" onClick={() => setView('fields')}>← 返回</button>
-          <strong className="brand">设置</strong>
+          <button className="ghost" onClick={view === 'rules' ? () => setView('settings') : backToFields}>← 返回</button>
+          <strong className="brand">{view === 'rules' ? '规则中心' : '设置'}</strong>
         </header>
-        <main>
-          <SettingsPanel />
-        </main>
+        <main>{view === 'rules' ? <RulesPanel /> : <SettingsPanel onOpenRules={() => setView('rules')} />}</main>
       </div>
     );
   }
@@ -212,7 +229,12 @@ export default function App() {
               />
               <span className="label" title={f.label}>{f.label}</span>
               <span className={`chip kind-${KIND_CATEGORIES[f.kind] ?? 'input'}`}>{KIND_LABELS[f.kind] ?? f.kind}</span>
-              <span className={`chip semantic${f.semantic === 'generic' ? ' generic' : ''}`}>{f.semantic}</span>
+              <span
+                className={`chip semantic${f.ruleCustom ? ' custom' : f.semantic === GENERIC_RULE_ID ? ' generic' : ''}`}
+                title={f.ruleCustom ? '自定义规则' : `内置规则 ${f.semantic}`}
+              >
+                {f.ruleName}
+              </span>
               <span className="spacer" />
               <span className="actions">
                 <button className="icon" title="换一个" onClick={() => void regen(f.id)}>↻</button>

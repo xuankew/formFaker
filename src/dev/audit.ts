@@ -3,11 +3,13 @@
 // 物理检查。目的是把过去只能靠用户截图发现的缺陷变成机器可判：语义词典被优先级抢掉
 // （「实际运营时间（年）」判成 date）、图片字段被当文件注入 PDF、面板成功而字段为空。
 // 不进 manifest，仅由 dev harness 暴露给浏览器端自检使用。
-import type { Kind, Semantic } from '../shared/types';
+import type { Kind } from '../shared/types';
+import type { Catalog } from '../core/rules/types';
 import { RANDOM_OPTION_PLACEHOLDER } from '../shared/types';
 import type { FieldCandidate } from '../core/scan';
 import { PLACEHOLDER_OPTION_RE } from '../core/scan';
 import { inferSemantic } from '../core/semantics/infer';
+import { defaultCatalog } from '../core/rules/catalog';
 import { requiredImageSize } from '../core/fill/files';
 
 export interface AuditEntry {
@@ -19,7 +21,7 @@ export interface AuditEntry {
 export interface Violation {
   label: string;
   kind: Kind;
-  semantic: Semantic;
+  semantic: string;
   rule: string;
   got: string;
 }
@@ -32,8 +34,8 @@ export interface AuditReport {
 interface Expectation {
   name: string;
   labelRe: RegExp;
-  // 省略时只校验值形态，不比对语义（如「开户行名」没有对应的 semantic 枚举）。
-  semantic?: Semantic;
+  // 省略时只校验值形态，不比对命中规则（如「开户行名」没有对应的规则）。
+  semantic?: string;
   valueRe: RegExp;
 }
 
@@ -162,14 +164,14 @@ function nonImageEvidence(live: string): string | null {
   return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext) ? null : payload;
 }
 
-export async function auditEntries(entries: AuditEntry[]): Promise<AuditReport> {
+export async function auditEntries(entries: AuditEntry[], catalog: Catalog = defaultCatalog()): Promise<AuditReport> {
   const violations: Violation[] = [];
   let checked = 0;
 
   for (const { cand, value, error } of entries) {
     if (cand.skipped || !cand.targets.length) continue;
     checked++;
-    const semantic = inferSemantic(cand.label, cand.kind);
+    const semantic = inferSemantic(cand.label, cand.kind, catalog);
     const push = (rule: string, got: string) => violations.push({ label: cand.label, kind: cand.kind, semantic, rule, got });
 
     if (error) {
