@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 测试
+        run: pnpm test
+
+      - name: 构建
+        run: pnpm build
+
+      - name: 校验版本号
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          MAN="$(node -p "JSON.parse(require('fs').readFileSync('dist/manifest.json','utf8')).version")"
+          if [ "$VERSION" != "$PKG" ] || [ "$VERSION" != "$MAN" ]; then
+            echo "版本不一致：tag=$VERSION package.json=$PKG manifest.json=$MAN" >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: 打包
+        run: |
+          cd dist
+          zip -qr "../FormFaker-${VERSION}.zip" . -x 'harness.js' -x '*.DS_Store'
+          cd ..
+          sha256sum "FormFaker-${VERSION}.zip" > SHA256SUMS.txt
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "FormFaker-${VERSION}.zip" SHA256SUMS.txt --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "FormFaker-${VERSION}.zip" SHA256SUMS.txt \
+              --title "FormFaker ${VERSION}" \
+              --generate-notes
+          fi

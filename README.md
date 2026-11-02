@@ -49,11 +49,12 @@ pnpm build
 
 修改代码后重新执行 `pnpm build`，再到扩展卡片上点刷新图标，并刷新已打开的业务页。
 
-### 使用打包好的 zip
+### 使用发布包（无需构建）
 
-1. 把 zip 解压到一个**固定目录**（扩展运行时会按需读取，目录不能删）。
-2. 打开 `chrome://extensions` 并开启「开发者模式」。
-3. 点「加载已解压的扩展程序」，选择解压后的目录（里面应有 `manifest.json`）。
+1. 到 [Releases](https://github.com/xuankew/formFaker/releases/latest) 下载最新的 `FormFaker-<版本>.zip`（同页附 `SHA256SUMS.txt`，可用 `shasum -a 256 -c SHA256SUMS.txt` 校验）。
+2. 把 zip 解压到一个**固定目录**（扩展运行时会按需读取，目录不能删）。
+3. 打开 `chrome://extensions` 并开启「开发者模式」。
+4. 点「加载已解压的扩展程序」，选择解压后的目录（里面应有 `manifest.json`）。
 
 ### 升级
 
@@ -218,21 +219,25 @@ src/
   demo/       自带 demo 页
 test/         Vitest + jsdom 单元测试
 docs/         产品设计与技术设计文档
+.github/      打 tag 触发构建与发布的工作流
 ```
 
 测试覆盖生成器校验位、语义匹配、控件分类、原生与框架控件填充、表格列头标签、滚动懒挂载、弹窗选择、上传门槛、落地审计与页面校验回读等路径，目前共 18 个测试文件、360+ 用例。
 
 demo 页另带开发期一键自检：注入 `harness.js` 后调用 `window.__ff.selfCheck()`，会跑「扫描 → 生成 → 填充 → 独立期望表审计」并输出违规清单。`harness.js` 只在开发构建中产生，不随发布包分发。
 
-### 打包
+### 发布
+
+发布由 GitHub Actions 自动完成（[`.github/workflows/release.yml`](.github/workflows/release.yml)）。同步 bump `package.json` 与 `public/manifest.json` 的 `version` 后，打 tag 并推送：
 
 ```bash
-pnpm build
-cd dist && zip -qr ../release/FormFaker-0.2.0.zip . -x harness.js
-cd dist && shasum -a 256 background.js content.js assets/*.js > ../release/SHA256SUMS.txt
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-`dist/` 与 `release/` 都不入库。构建产物使用固定文件名（不带内容哈希），方便需要按文件名做脚本白名单的环境；版本追溯依赖 `package.json` 与 `public/manifest.json` 中的 `version`，发版前记得同步手动 bump。
+工作流会运行 `pnpm test` 与 `pnpm build`，校验 tag、`package.json`、`manifest.json` 三处版本号一致（不一致直接失败），再把 `dist/` 打成 `FormFaker-<版本>.zip`（排除开发自检用的 `harness.js`），连同 `SHA256SUMS.txt` 创建 GitHub Release。
+
+`dist/` 与 `release/` 都不入库。构建产物使用固定文件名（不带内容哈希），方便需要按文件名做脚本白名单的环境；版本追溯依赖 `package.json` 与 `public/manifest.json` 中的 `version`。
 
 ## 参与贡献
 
